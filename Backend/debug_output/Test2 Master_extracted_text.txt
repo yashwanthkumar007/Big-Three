@@ -1,0 +1,291 @@
+
+===== PAGE 0 — raw get_text('text') =====
+75103529
+75103529
+        Hver kapsel indeholder 240 mg dimethylfumarat.
+Læs indlægssedlen inden brug.
+Opbevares utilgængeligt for børn.
+Må ikke opbevares ved temperaturer over 30 ºC.
+DK
+        Hver kapsel inneholder 240 mg dimetylfumarat.
+Les pakningsvedlegget før bruk. 
+Oppbevares utilgjengelig for barn.
+Oppbevares ved høyst 30 °C.
+NO
+Danmark / Norge / Ìsland
+Vnr 06 84 00
+CODE No.: MP/DRUGS/25/1/2014
+Dimethyl fumarate Mylan 
+240mg 
+enterokapsler, hårde / enterokapsler, harde / 
+magasýruþolin hörð hylki
+Mylan Ireland Limited
+Unit 35/36 Grange Parade 
+Baldoyle Industrial Estate
+Dublin 13 
+Irland / Ìrland
+56 x
+Dimethyl fumarate Mylan 
+ 
+240 mg 
+Til oral brug / Oral bruk / Til inntöku
+56 enterokapsler / magasýruþolin hylki
+        Hvert hylki inniheldur 240 mg dímetýlfúmarat.
+Lesið fylgiseðilinn fyrir notkun.
+Geymið þar sem börn hvorki ná til né sjá.
+Geymið við lægri hita en 30 °C.
+IS
+EU/1/24/1814/005
+  
+Dimethyl fumarate Mylan 
+ 
+240
+ mg 
+enterokapsler, hårde / enterokapsler, harde / 
+magasýruþolin hörð hylki
+56 x
+3457804
+enterokapsler, hårde / enterokapsler, harde / 
+magasýruþolin hörð hylki
+dimethylfumarat / dimetylfumarat / dímetýlfúmarat 
+ *PC: 00000000000000
+ *SN: 00000000000000
+  Lot: 0000000000
+  EXP: MM/YYYY
+ 
+ 
+Variable Data Information box for online 
+printing - Nordics Shared
+* Will be printed only after serialisation go live
+Keep this section as part of the Artwork in Keyline colour.
+Variable Data area will be left blank for online printing.
+Version: 1478112
+artwork - 100%
+Date / Remarks
+Date / Remarks
+Date / Remarks
+Date / Remarks
+Date / Remarks
+Date / Remarks
+26.04.2024 - Keyline Shared 
+Date / Remarks
+Date / Remarks
+Sign, Date
+OR
+Digital Signature
+Sign, Date
+OR
+Digital Signature
+Sign, Date
+OR
+Digital Signature
+Sign, Date
+OR
+Digital Signature
+Sign, Date
+OR
+Digital Signature
+dd / mm / yy
+dd / mm / yy
+1 of 1
+KEYLINE
+PANTONE
+306 CP
+BLACK
+100%
+UNVARNISHED
+PANTONE
+260 CP
+CYAN
+BRAILLE
+PANTONE
+543 CP
+MAGENTA
+YELLOW
+11/05/24  11:10
+3457804
+3457804
+NA
+NA
+EU/1/24/1814/005
+400578054
+Mylan Laboratories Ltd. , FDF 3
+(Pithampur, Dhar Dist., M.P. - IN)
+MP/DRUGS/25/1/2014
+NA
+1
+NA
+3DR-5552-01
+Helvetica Neue LT Pro
+NA
+8 pt
+New Component
+NA
+NA
+Adobe Illustrator 2024
+Denmark;Iceland;Norway
+CT DMF CAP GR 240MG 4X14'S DK/IS/NO
+75103529
+NIL
+Printed Carton
+4
+139 x 72 x 48 mm
+NA
+NA
+NA
+NA
+270 Gsm ITC Cyber Plus Board with Spot Aqua Varnish
+Supply in Side Opening and Reverse Tuck-In
+Reference SOP-000459814 
+ 
+ 
+ 
+ 
+ 
+FORM-000644250 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Version 3.0 
+#Note: This artwork is electronically signed through TrackWise/GLAMS, hence wet ink/digital signatures are not done/required.
+
+===== PAGE 0 — line-level extraction (what the pipeline uses) =====
+75103529
+75103529
+Hver kapsel indeholder 240 mg dimethylfumarat.
+Læs indlægssedlen inden brug.
+Opbevares utilgængeligt for børn.
+Må ikke opbevares ved temperaturer over 30 ºC.
+DK
+Hver kapsel inneholder 240 mg dimetylfumarat.
+Les pakningsvedlegget før bruk.
+Oppbevares utilgjengelig for barn.
+Oppbevares ved høyst 30 °C.
+NO
+Danmark / Norge / Ìsland
+Vnr 06 84 00
+CODE No.: MP/DRUGS/25/1/2014
+Dimethyl fumarate Mylan
+240mg
+enterokapsler, hårde / enterokapsler, harde /
+magasýruþolin hörð hylki
+Mylan Ireland Limited
+Unit 35/36 Grange Parade
+Baldoyle Industrial Estate
+Dublin 13
+Irland / Ìrland
+56 x
+Dimethyl fumarate Mylan
+240 mg
+Til oral brug / Oral bruk / Til inntöku
+56 enterokapsler / magasýruþolin hylki
+Hvert hylki inniheldur 240 mg dímetýlfúmarat.
+Lesið fylgiseðilinn fyrir notkun.
+Geymið þar sem börn hvorki ná til né sjá.
+Geymið við lægri hita en 30 °C.
+IS
+EU/1/24/1814/005
+Dimethyl fumarate Mylan
+240
+mg
+enterokapsler, hårde / enterokapsler, harde /
+magasýruþolin hörð hylki
+56 x
+3457804
+enterokapsler, hårde / enterokapsler, harde /
+magasýruþolin hörð hylki
+dimethylfumarat / dimetylfumarat / dímetýlfúmarat
+*PC: 00000000000000
+*SN: 00000000000000
+Lot: 0000000000
+EXP: MM/YYYY
+Variable Data Information box for online
+printing - Nordics Shared
+* Will be printed only after serialisation go live
+Keep this section as part of the Artwork in Keyline colour.
+Variable Data area will be left blank for online printing.
+Version: 1478112
+artwork - 100%
+Date / Remarks
+Date / Remarks
+Date / Remarks
+Date / Remarks
+Date / Remarks
+Date / Remarks
+26.04.2024 - Keyline Shared
+Date / Remarks
+Date / Remarks
+Sign, Date
+OR
+Digital Signature
+Sign, Date
+OR
+Digital Signature
+Sign, Date
+OR
+Digital Signature
+Sign, Date
+OR
+Digital Signature
+Sign, Date
+OR
+Digital Signature
+dd / mm / yy
+dd / mm / yy
+1 of 1
+KEYLINE
+PANTONE
+306 CP
+BLACK
+100%
+UNVARNISHED
+PANTONE
+260 CP
+CYAN
+BRAILLE
+PANTONE
+543 CP
+MAGENTA
+YELLOW
+11/05/24  11:10
+3457804
+3457804
+NA
+NA
+EU/1/24/1814/005
+400578054
+Mylan Laboratories Ltd. , FDF 3
+(Pithampur, Dhar Dist., M.P. - IN)
+MP/DRUGS/25/1/2014
+NA
+1
+NA
+3DR-5552-01
+Helvetica Neue LT Pro
+NA
+8 pt
+New Component
+NA
+NA
+Adobe Illustrator 2024
+Denmark;Iceland;Norway
+CT DMF CAP GR 240MG 4X14'S DK/IS/NO
+75103529
+NIL
+Printed Carton
+4
+139 x 72 x 48 mm
+NA
+NA
+NA
+NA
+270 Gsm ITC Cyber Plus Board with Spot Aqua Varnish
+Supply in Side Opening and Reverse Tuck-In
+Reference SOP-000459814
+FORM-000644250
+Version 3.0
+#Note: This artwork is electronically signed through TrackWise/GLAMS, hence wet ink/digital signatures are not done/required.

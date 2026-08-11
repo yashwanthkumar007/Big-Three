@@ -1,0 +1,741 @@
+======================================================================
+             MASTER VS SAMPLE SIDE-BY-SIDE DEBUG REPORT              
+======================================================================
+Master File : C:\Users\m685910\OneDrive - Mylan Inc\Global Vision Replace\Data\Master\Test3 Master.pdf
+Sample File : C:\Users\m685910\OneDrive - Mylan Inc\Global Vision Replace\Data\Sample\Test2 Sample.pdf
+Master Pages: 2 | Sample Pages: 1
+======================================================================
+
+
+============================== PAGE 1 ==============================
+[MASTER] Words: 1822 | Chars: 12457
+[SAMPLE] Words: 405 | Chars: 2666
+⚠️ ATTENTION: Word count mismatch on Page 1 (Difference: 1417 words)
+
+--- [MASTER] EXTRACTED TEXT ---
+75104595
+75104595
+Ako je ovaj lijek propisan Vašem djetetu, molimo obratite 
+pozornost da se sve informacije u ovoj Uputi odnose na Vaše 
+dijete (u tom slučaju molimo umjesto „Vi” čitajte „Vaše dijete”).
+1. Što je Tenofovir disoproxil Mylan i za što se koristi
+Tenofovir disoproxil Mylan sadrži djelatnu tvar tenofovirdizoproksil. 
+Ta djelatna tvar je antiretrovirusni ili antivirusni lijek koji se primjenjuje 
+za liječenje HIV ili HBV infekcije ili oboje. Tenofovir je nukleotidni 
+inhibitor reverzne transkriptaze, općenito poznat kao NRTI i djeluje 
+tako što ometa normalan rad enzima (kod HIV-a reverzne transkriptaze, 
+a kod HBV-a DNA polimeraze) koji su tim virusima neophodni za 
+umnožavanje. Kod HIV-a, Tenofovir disoproxil Mylan se uvijek treba 
+primjenjivati u kombinaciji s drugim lijekovima za liječenje HIV infekcije.
+Tenofovir disoproxil Mylan 245 mg tablete su lijek za liječenje 
+infekcije virusom humane imunodeficijencije (HIV). Tablete su 
+pogodne u:
+• odraslih
+• adolescenata u dobi od 12 do manje od 18 godina koji su već
+bili liječeni drugim lijekovima protiv HIV-a koji više nisu potpuno
+djelotvorni zbog razvoja rezistencije ili su prouzročili nuspojave.
+Tenofovir disoproxil Mylan 245 mg tablete također se primjenjuju 
+za liječenje kroničnog hepatitisa B, infekcije virusom hepatitisa B 
+(HBV). Tablete su pogodne u:
+• odraslih
+• adolescenata u dobi od 12 do manje od 18 godina.
+Da biste se liječili lijekom Tenofovir disoproxil Mylan zbog infekcije 
+HBV-om, ne morate biti zaraženi HIV-om.
+Ovaj lijek neće izliječiti infekciju virusom HIV-a. I tijekom uzimanja 
+lijeka Tenofovir disoproxil Mylan može doći do razvoja infekcija i drugih 
+bolesti povezanih s infekcijom virusom HIV-a. Isto tako možete HBV 
+prenijeti na druge, pa je zbog toga važno poduzeti mjere opreza kako 
+biste izbjegli inficiranje drugih osoba.
+2.	Što morate znati prije nego počnete uzimati Tenofovir
+disoproxil Mylan
+Nemojte uzimati Tenofovir disoproxil Mylan
+• ako ste alergični na tenofovir, tenofovirdizoproksil ili neki drugi
+sastojak ovog lijeka naveden u dijelu 6.
+Ako se ovo odnosi na Vas, odmah o tome obavijestite liječnika i 
+nemojte uzimati Tenofovir disoproxil Mylan.
+Upozorenja i mjere opreza
+Tenofovir disoproxil Mylan ne smanjuje rizik od prijenosa HBV-a na 
+druge osobe spolnim putem ili putem krvi. Da biste to izbjegli, morate i 
+dalje poduzimati mjere opreza.
+Obratite se svom liječniku ili ljekarniku prije nego uzmete lijek Tenofovir 
+disoproxil Mylan.
+• Ako ste imali bolest bubrega ili ako su testovi ukazivali na
+probleme s bubrezima. Tenofovir disoproxil Mylan se ne smije
+davati adolescentima s bubrežnim tegobama. Prije početka liječenja,
+liječnik će Vam možda zatražiti krvne pretrage da bi ocijenio rad
+bubrega. Tenofovir disoproxil Mylan može utjecati na Vaše bubrege
+za vrijeme liječenja. Liječnik može zatražiti krvne pretrage i tijekom
+liječenja u cilju praćenja rada Vaših bubrega. Ako ste odrasla osoba,
+liječnik Vam može savjetovati da rijeđe uzimate tablete. Nemojte
+snižavati propisanu dozu, osim ako Vam je tako rekao liječnik.
+Tenofovir disoproxil Mylan se obično ne uzima s drugim lijekovima 
+koji Vam mogu oštetiti bubrege (pogledajte Drugi lijekovi i Tenofovir 
+disoproxil Mylan). Ako se to ne može izbjeći, liječnik će jednom 
+tjedno pratiti funkciju Vaših bubrega.
+• Ako bolujete od osteoporoze, imate prijelom kostiju u anamnezi ili
+imate probleme s kostima.
+Poteškoće s kostima (koje se očituju kao ustrajni ili pogoršavajući
+bolovi u kostima i katkada završe prijelomima) mogu se također
+javiti zbog oštećenja stanica bubrežnih tubula (pogledajte dio 4,
+Moguće nuspojave). Obavijestite svog liječnika ako imate bolove u
+kostima ili prijelome kostiju.
+Tenofovirdizoproksil ujedno može uzrokovati gubitak koštane
+mase. Najizraženiji gubitak koštane mase zabilježen je u kliničkim
+ispitivanjima kada su bolesnici bili liječeni tenofovirdizoproksilom u
+kombinaciji s pojačanim inhibitorom proteaze.
+Ukupno gledano, u odraslih i pedijatrijskih bolesnika su učinci
+tenofovirdizoproksila na dugoročno zdravlje kostiju i budući rizik od
+prijeloma neizvjesni.
+U nekih odraslih bolesnika s HIV-om koji uzimaju kombiniranu
+antiretrovirusnu terapiju može se razviti koštana bolest koja se
+naziva osteonekroza (odumiranje koštanog tkiva zbog gubitka
+dotoka krvi u kost). Neki od mnogih čimbenika rizika za razvoj
+te bolesti mogu biti, između ostalih, trajanje kombinirane
+antiretrovirusne terapije, primjena kortikosteroida, konzumiranje
+alkohola, teška imunosupresija, viši indeks tjelesne mase. Znakovi
+osteonekroze jesu ukočenost zglobova, bolovi (osobito u kuku,
+koljenu i ramenu) te otežano gibanje. Ako opazite bilo koji od tih
+simptoma, obavijestite liječnika.
+• Ako ste imali bolest jetre, uključujući hepatitis, razgovarajte s
+liječnikom. Bolesnici s bolešću jetre, uključujući kronični hepatitis B
+ili C, koji se liječe antiretrovirusnim lijekovima, izloženi su većem
+riziku od teških i potencijalno fatalnih jetrenih komplikacija. Ako ste
+zaraženi hepatitisom B, Vaš će liječnik pažljivo razmisliti o najboljem
+liječenja za Vas. Ako ste imali bolest jetre ili kroničnu infekciju
+hepatitisom B, liječnik će možda napraviti krvne pretrage da bi
+mogao pratiti funkciju jetre.
+• Obratite pozornost na infekcije. Ako imate uznapredovali oblik
+HIV infekcije (AIDS) i imate neku infekciju, u Vas se mogu nakon
+započinjanja liječenja lijekom Tenofovir disoproxil Mylan razviti
+simptomi infekcije i upale ili pogoršanje simptoma postojeće
+infekcije. Ti simptomi mogu ukazivati na to da se poboljšani
+imunološki sustav Vašega tijela bori protiv infekcije. Obratite
+pozornost na znakove upale ili infekcije ubrzo nakon što započnete
+uzimati Tenofovir disoproxil Mylan. Ako opazite znakove upale ili
+infekcije, odmah o tome obavijestite liječnika.
+Pored oportunističkih infekcija, autoimuni poremećaji (stanje koje se
+javlja kada imunološki sustav napada zdravo tkivo Vašeg organizma)
+može se također dogoditi nakon početka uzimanja lijekova za
+liječenje infekcije HIV-om. Autoimuni poremećaji mogu se pojaviti
+puno mjeseci kasnije nakon početka liječenja. Ako uočite bilo
+koje simptome infekcije ili druge simptome poput slabosti mišića,
+slabosti koja počinje u šakama i stopalima i pomiče se gore prema
+trupu tijela, palpitacije, tremora ili hiperaktivnosti, obavijestite svog
+liječnika odmah kako biste potražili liječničku pomoć.
+• Ako ste stariji od 65 godina, razgovarajte s liječnikom ili
+ljekarnikom. Tenofovirdizoproksil nije ispitan u bolesnika starijih od
+65 godina. Imate li više od 65 godina, a propisali su Vam Tenofovir
+disoproxil Mylan, liječnik će Vas pažljivo nadzirati.
+Djeca i adolescenti
+Tenofovir disoproxil Mylan 245 mg tablete pogodne su za:
+• adolescente zaražene virusom HIV-1 koji su u dobi od 12 do
+manje od 18 godina i imaju tjelesnu težinu od najmanje 35 kg 
+i već su bili liječeni drugim lijekovima protiv HIV-a koji više nisu 
+potpuno djelotvorni zbog razvoja rezistencije ili su prouzročili 
+nuspojave
+• adolescente zaražene virusom HBV-a koji su u dobi od 12 do
+manje od 18 godina i imaju tjelesnu težinu od najmanje 35 kg.
+Tenofovir disoproxil Mylan 245 mg tablete nisu pogodne za sljedeće 
+skupine:
+• nisu za djecu zaraženu virusom HIV-1 mlađu od 12 godina
+• nisu za djecu zaraženu virusom HBV-a mlađu od 12 godina.
+Za doziranje pogledajte dio 3, Kako uzimati Tenofovir disoproxil Mylan.
+Drugi lijekovi i Tenofovir disoproxil Mylan
+Obavijestite svog liječnika ili ljekarnika ako uzimate, nedavno ste uzeli 
+ili biste mogli uzeti bilo koje druge lijekove.
+Ako ste istovremeno zaraženi HIV-om i HBV-om, nemojte prestati 
+uzimati lijekove protiv HIV-a koje vam je propisao vaš liječnik kad 
+započnete terapiju lijekom Tenofovir disoproxil Mylan.
+• Nemojte uzimati Tenofovir disoproxil Mylan ako već uzimate
+druge lijekove koji sadrže tenofovirdizoproksil ili tenofoviralafenamid.
+Nemojte istovremeno uzimati Tenofovir disoproxil Mylan i lijekove
+koji sadrže adefovirdipivoksil (lijek koji se koristi za liječenje
+kroničnog hepatitisa B).
+• Vrlo je važno da liječnika obavijestite ako uzimate druge
+lijekove koji Vam mogu oštetiti bubrege.
+Ti lijekovi uključuju:
+• aminoglikozide, pentamidin ili vankomicin (za bakterijsku infekciju),
+• amfotericin B (za gljivičnu infekciju),
+• foskarnet, ganciklovir ili cidofovir (za virusnu infekciju),
+• interleukin-2 (za liječenje raka),
+• adefovirdipivoksil (za HBV),
+• takrolimus (za supresiju imunološkog sustava),
+• nesteroidne antiinflamatorne (protuupalne) lijekove (NSAIL, za
+ublažavanje boli u kostima ili mišićima).
+• Drugi lijekovi koji sadrže didanozin (za infekciju virusom
+HIV-a): Uzimanjem lijeka Tenofovir disoproxil Mylan s drugim
+antivirusnim lijekovima koji sadrže didanozin može Vam se povećati
+razina didanozina u krvi i smanjiti broj CD4 stanica. U rijetkim su
+slučajevima zabilježene upala gušterače i laktacidoza (prekomjerna
+količina mliječne kiseline u krvi), koje katkada mogu uzrokovati smrt,
+kada su se zajedno uzimali lijekovi koji sadrže tenofovirdizoproksil
+i didanozin. Vaš će liječnik pažljivo razmotriti hoće li Vas liječiti
+kombinacijama tenofovira i didanozina.
+• Također je važno obavijestiti liječnika ako uzimate ledipasvir/
+sofosbuvir, sofosbuvir/velpatasvir ili sofosbuvir/velpatasvir/
+voksilaprevir radi liječenja infekcije hepatitisom C.
+Tenofovir disoproxil Mylan s hranom i pićem
+Tenofovir disoproxil Mylan uzimajte s hranom (na primjer uz obrok ili 
+užinu).
+Trudnoća i dojenje
+Ako ste trudni ili dojite, mislite da biste mogli biti trudni ili planirate 
+imati dijete, obratite se svom liječniku ili ljekarniku za savjet prije nego 
+uzmete ovaj lijek.
+• Pokušajte spriječiti trudnoću tijekom liječenja lijekom Tenofovir
+disoproxil Mylan. Morate primjenjivati učinkovitu kontracepcijsku
+metodu kako biste spriječili trudnoću.
+• Ako ste Tenofovir disoproxil Mylan uzimali tijekom trudnoće,
+postoji mogućnost da liječnik zatraži redovito provođenje pretraga
+krvi i drugih dijagnostičkih pretraga kako bi pratio razvoj vašega
+djeteta. U djece čije su majke tijekom trudnoće uzimale NRTI-jeve
+prevagnula je korist od zaštite protiv HIV-a u odnosu na rizike od
+nuspojava.
+• Ako ste majka koja je zaražena HBV i Vaša beba je primila terapiju
+za sprječavanje prijenosa hepatitisa B pri rođenju, možda možete
+dojiti svoje dojenče, ali prvo se obratite svom liječniku kako biste
+dobili više informacija.
+• Dojenje se ne preporučuje u žena koje žive s HIV-om jer se
+infekcija HIV-om može prenijeti na dijete kroz majčino mlijeko. Ako
+dojite ili razmišljate o dojenju, morate o tome razgovarati sa svojim
+liječnikom što je prije moguće.
+Upravljanje vozilima i strojevima
+Tenofovirdizoproksil može uzrokovati omaglicu. Ako tijekom uzimanja 
+lijeka Tenofovir disoproxil Mylan imate omaglicu, nemojte upravljati 
+vozilom, voziti se na biciklu niti raditi s alatima ili na strojevima.
+Uputa o lijeku: Informacije za bolesnika
+Tenofovir disoproxil Mylan 245 mg
+filmom obložene tablete
+tenofovirdizoproksil
+Pažljivo pročitajte cijelu uputu prije nego počnete uzimati ovaj lijek jer sadrži Vama važne podatke.
+- Sačuvajte ovu uputu. Možda ćete je trebati ponovno pročitati.
+-
+1. Što je Tenofovir disoproxil Mylan i za što se koristi
+2. Što morate znati prije nego počnete uzimati Tenofovir disoproxil
+Mylan
+3. Kako uzimati Tenofovir disoproxil Mylan
+4. Moguće nuspojave
+5. Kako čuvati Tenofovir disoproxil Mylan
+6. Sadržaj pakiranja i druge informacije
+Što se nalazi u ovoj uputi:
+Tenofovir disoproxil Mylan 
+245 mg
+Tenofovir disoproxil Mylan 
+245 mg
+HR
+Date / Remarks
+Date / Remarks
+Date / Remarks
+Date / Remarks
+Date / Remarks
+Date / Remarks
+24.06.2024 - Artwork Revised
+Date / Remarks
+Date / Remarks
+Sign, Date
+OR
+Digital Signature
+Sign, Date
+OR
+Digital Signature
+Sign, Date
+OR
+Digital Signature
+Sign, Date
+OR
+Digital Signature
+Sign, Date
+OR
+Digital Signature
+dd / mm / yy
+dd / mm / yy
+1 of 2
+KEYLINE
+NA
+BLACK
+100%
+03/07/24  14:00
+3529256
+3529256
+3185776
+NA
+EU/1/16/1129/001
+400535542
+Mylan Laboratories Ltd. , FDF 3
+(Pithampur, Dhar Dist., M.P. - IN)
+NA
+NA
+1
+NA
+NA
+Helvetica Neue LT Pro
+NA
+10 pt
+Safety
+NA
+NA
+Adobe InDesign 2024
+Croatia
+LIT(BOT)TENO DISO MYL TABLET 245MG HR V7
+75104595
+75098182
+Printed Literature
+1
+Flat - 360 x 420 mm
+Folded - 36 x 60 mm
+NA
+NA
+NA
+40gsm ITC Tribeni Paper
+Supply in folded form as proposed size with tape
+Reference SOP-000459814 
+FORM-000644250 
+ 
+Version 3.0 
+#Note: This artwork is electronically signed through TrackWise/GLAMS, hence wet ink/digital signatures are not done/required.
+
+--- [SAMPLE] EXTRACTED TEXT ---
+75103529
+75103529
+        Hver kapsel indeholder 240 mg dimethylfumarat.
+Læs indlægssedlen inden brug.
+Opbevares utilgængeligt for børn.
+Må ikke opbevares ved temperaturer over 30 ºC.
+DK
+        Hver kapsel inneholder 240 mg dimetylfumarat.
+Les pakningsvedlegget før bruk. 
+Oppbevares utilgjengelig for barn.
+Oppbevares ved høyst 30 °C.
+NO
+Danmark / Norge / Ìsland
+Vnr 06 84 00
+CODE No.: MP/DRUGS/25/1/2014
+Dimethyl fumarate Mylan 
+240mg 
+enterokapsler, hårde / enterokapsler, harde / 
+magasýruþolin hörð hylki
+Mylan Ireland Limited
+Unit 35/36 Grange Parade 
+Baldoyle Industrial Estate
+Dublin 13 
+Irland / Ìrland
+56 x
+Dimethyl fumarate Mylan 
+ 
+240 mg 
+Til oral brug / Oral bruk / Til inntöku
+56 
+enterokapsler, hårde / enterokapsler, harde / 
+magasýruþolin hörð hylki
+        Hvert hylki inniheldur 240 mg dímetýlfúmarat.
+Lesið fylgiseðilinn fyrir notkun.
+Geymið þar sem börn hvorki ná til né sjá.
+Geymið við lægri hita en 30 °C.
+IS
+EU/1/24/1814/005
+  
+Dimethyl fumarate Mylan 
+ 
+240
+ mg 
+enterokapsler, hårde / enterokapsler, harde / 
+magasýruþolin hörð hylki
+56 x
+3457804
+enterokapsler, hårde / enterokapsler, harde / 
+magasýruþolin hörð hylki
+dimethylfumarat / dimetylfumarat / dímetýlfúmarat 
+ *PC: 00000000000000
+ *SN: 00000000000000
+  Lot: 0000000000
+  EXP: MM/YYYY
+ 
+ 
+Variable Data Information box for online 
+printing - Nordics Shared
+* Will be printed only after serialisation go live
+Keep this section as part of the Artwork in Keyline colour.
+Variable Data area will be left blank for online printing.
+Version: 1478112
+artwork - 100%
+Date / Remarks
+Date / Remarks
+Date / Remarks
+Date / Remarks
+Date / Remarks
+Date / Remarks
+26.04.2024 - Keyline Shared 
+Date / Remarks
+Date / Remarks
+Sign, Date
+OR
+Digital Signature
+Sign, Date
+OR
+Digital Signature
+Sign, Date
+OR
+Digital Signature
+Sign, Date
+OR
+Digital Signature
+Sign, Date
+OR
+Digital Signature
+dd / mm / yy
+dd / mm / yy
+1 of 1
+KEYLINE
+PANTONE
+306 CP
+BLACK
+100%
+UNVARNISHED
+PANTONE
+260 CP
+CYAN
+BRAILLE
+PANTONE
+543 CP
+MAGENTA
+YELLOW
+25/06/24  11:00
+3457804
+3457804
+NA
+05099151937742
+EU/1/24/1814/005
+400578054
+Mylan Laboratories Ltd. , FDF 3
+(Pithampur, Dhar Dist., M.P. - IN)
+MP/DRUGS/25/1/2014
+NA
+3
+NA
+3DR-5552-01
+Helvetica Neue LT Pro
+NA
+8 pt
+New Component
+NA
+NA
+Adobe Illustrator 2024
+Denmark;Iceland;Norway
+CT DMF CAP GR 240MG 4X14'S DK/IS/NO
+75103529
+NIL
+Printed Carton
+4
+139 x 72 x 48 mm
+NA
+NA
+NA
+NA
+270 Gsm ITC Cyber Plus Board with Spot Aqua Varnish
+Supply in Side Opening and Reverse Tuck-In
+Reference SOP-000459814 
+ 
+ 
+ 
+ 
+ 
+FORM-000644250 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Version 3.0 
+#Note: This artwork is electronically signed through TrackWise/GLAMS, hence wet ink/digital signatures are not done/required.
+----------------------------------------------------------------------
+
+============================== PAGE 2 ==============================
+[MASTER] Words: 1660 | Chars: 11022
+[SAMPLE] Words: N/A (Page missing) | Chars: N/A
+
+--- [MASTER] EXTRACTED TEXT ---
+Tenofovir disoproxil Mylan sadrži laktozu
+Obavijestite liječnika prije nego što počnete uzimati Tenofovir 
+disoproxil Mylan. Ako Vam je liječnik rekao da ne podnosite neke 
+šećere, obratite se liječniku prije uzimanja ovog lijeka.
+3.	Kako uzimati Tenofovir disoproxil Mylan
+Uvijek uzmite ovaj lijek točno onako kako Vam je rekao liječnik. 
+Provjerite s liječnikom ili ljekarnikom ako niste sigurni.
+Preporučena doza:
+•	 Odrasli: 1 tableta svaki dan s hranom (na primjer, s obrokom ili 
+užinom).
+•	 Adolescenti u dobi od 12 do manje od 18 godina tjelesne težine 
+od najmanje 35 kg: 1 tableta svaki dan s hranom (na primjer s 
+obrokom ili užinom).
+Ako imate posebnih poteškoća pri gutanju, tabletu možete smrviti 
+vrhom žlice. Prašak onda pomiješajte s oko 100 ml (pola čaše) vode, 
+soka od naranče ili soka od grožđa pa odmah popijte.
+•	 Uvijek uzimajte onu dozu koju Vam je preporučio liječnik. 
+To je iz razloga da budete sigurni da je lijek koji uzimate potpuno 
+djelotvoran te da smanjite rizik od razvoja otpornosti na liječenje. 
+Nemojte mijenjati dozu, osim ako Vam liječnik ne kaže da to učinite.
+•	 Ako ste odrasla osoba i imate problema s bubrezima, možda će 
+Vas liječnik uputiti da rjeđe uzimate Tenofovir disoproxil Mylan.
+•	 Ako ste inficirani HBV-om, vaš liječnik Vas može uputiti na testiranje 
+infekcije HIV-om, kako bi se utvrdilo jeste li istovremeno inficirani s 
+oba virusa. Pročitajte upute o drugim antiretrovirusnim lijekovima, 
+koje su namijenjene bolesniku i koje daju smjernice o načinu 
+uzimanja tih lijekova.
+•	 Drugi oblici ovoga lijeka mogu biti prikladniji za bolesnike koji imaju 
+poteškoća pri gutanju; pitajte liječnika ili ljekarnika.
+Ako uzmete više lijeka Tenofovir disoproxil Mylan nego što ste 
+trebali
+Ako slučajno uzmete previše Tenofovir disoproxil Mylan tableta, 
+možete imati povećani rizik od mogućih nuspojava ovog lijeka 
+(pogledajte dio 4 Moguće nuspojave). Obratite se svome liječniku ili 
+najbližoj hitnoj medicinskoj službi za savjet. Sa sobom ponesite bočicu 
+s tabletama kako bi lakše opisali što ste uzeli.
+Ako ste zaboravili uzeti Tenofovir disoproxil Mylan
+Važno je da ne propustite uzeti dozu lijeka Tenofovir disoproxil Mylan. 
+Ako propustite dozu, izračunajte koliko je proteklo od vremena kad ste 
+ju trebali uzeti.
+•	 Ako je proteklo manje od 12 sati od vremena kada ju obično 
+uzimate, uzmite dozu čim možete, a potom sljedeću dozu uzmite u 
+redovito vrijeme.
+•	 Ako je proteklo više od 12 sati od vremena kada ste ju trebali 
+uzeti, zaboravite na dozu koju ste propustili. Pričekajte pa sljedeću 
+dozu uzmite u redovito vrijeme. Nemojte uzeti dvostruku dozu kako 
+biste nadoknadili zaboravljenu tabletu.
+Ako ste povraćali u razmaku manjem od 1 sata nakon što ste 
+uzeli Tenofovir disoproxil Mylan, uzmite drugu tabletu. Drugu tabletu 
+ne trebate uzimati ako ste povraćali nakon što je prošlo više od 1 sata 
+po uzimanju lijeka Tenofovir disoproxil Mylan.
+Ako prestanete uzimati Tenofovir disoproxil Mylan
+Nemojte prestati uzimati Tenofovir disoproxil Mylan bez liječničke 
+preporuke. Prestanak liječenja lijekom Tenofovir disoproxil Mylan može 
+smanjiti učinkovitost terapije koju Vam je preporučio liječnik.
+Ako imate hepatitis B ili HIV infekciju i hepatitis B zajedno 
+(istovremena infekcija), vrlo je važno da se ne prestanete liječiti 
+lijekom Tenofovir disoproxil Mylan, a da prije toga niste razgovarali s 
+liječnikom. Neki su bolesnici imali krvne pretrage ili simptome koji su 
+ukazivali na to da im se hepatitis pogoršao nakon prestanka liječenja 
+tenofovirdizoproksilom. Možda ćete morati nekoliko mjeseci nakon 
+prestanka liječenja raditi krvne pretrage. U nekih se bolesnika s 
+uznapredovalom bolešću jetre ili cirozom jetre ne preporučuje prekid 
+liječenja, jer to može dovesti do pogoršanja hepatitisa.
+•	 Razgovarajte s liječnikom prije nego što iz bilo kojeg razloga 
+prestanete uzimati Tenofovir disoproxil Mylan, osobito ako osjetite 
+neke nuspojave ili dobijete neku drugu bolest.
+•	 Liječnika odmah obavijestite o novim ili neobičnim simptomima 
+nakon što se prestanete liječiti, osobito o simptomima koje dovodite 
+u vezu s infekcijom hepatitisom B.
+•	 Obratite se liječniku prije nego što ponovno počnete uzimati tablete 
+Tenofovir disoproxil Mylan.
+U slučaju bilo kakvih pitanja u vezi s primjenom ovog lijeka, obratite se 
+svom liječniku ili ljekarniku.
+4.	Moguće nuspojave
+Tijekom terapije HIV-a moguće je povećanje tjelesne težine i povišenje 
+razina lipida i glukoze u krvi. To je djelomično povezano s poboljšanim 
+zdravljem i stilom života, dok je u slučaju lipida u krvi katkad povezano 
+i s lijekovima za liječenje HIV-a. Vaš liječnik će obaviti provjeru tih 
+promjena.
+Kao i svi drugi lijekovi, ovaj lijek može uzrokovati nuspojave iako se one 
+neće javiti kod svakoga.
+Moguće ozbiljne nuspojave: odmah obavijestite svog liječnika
+•	 Laktacidoza (prekomjerna razina mliječne kiseline u krvi) je 
+rijetka (može se javiti u do 1 na svakih 1000 bolesnika), ali ozbiljna 
+nuspojava koja može imati smrtni ishod. Sljedeće nuspojave mogu 
+biti znakovi laktacidoze:
+•	 duboko, brzo disanje
+•	 omamljenost
+•	 mučnina, povraćanje i bol u trbuhu.
+Ukoliko sumnjate da možda imate laktacidozu, odmah se obratite 
+liječniku.
+Ostale moguće ozbiljne nuspojave
+Sljedeće nuspojave su manje česte (mogu se javiti u do 1 na svakih 
+100 bolesnika):
+•	 bol u trbuhu (abdomenu) uzrokovana upalom gušterače
+•	 oštećenje stanica bubrežnih tubula
+Sljedeće nuspojave su rijetke (mogu se javiti u do 1 na svakih 
+1000 bolesnika):
+•	 upala bubrega, prekomjerno mokrenje i žeđ
+•	 promjene svojstava mokraće i bol u leđima uzrokovana 
+tegobama s bubrezima, uključujući zatajenje bubrega
+•	 omekšanje kostiju (uz bol u kostima i ponekad posljedičnim 
+prijelomom kostiju) do čega može doći zbog oštećenja stanica 
+bubrežnih tubula.
+•	 masna jetra
+Ako mislite da imate bilo koju od ovih ozbiljnih nuspojava, 
+obavijestite svog liječnika.
+Najčešće nuspojave
+Sljedeće nuspojave su vrlo česte (mogu se javiti u najmanje 10 na 
+svakih 100 bolesnika):
+•	 proljev, povraćanje, mučnina, omaglica, osip, slabost
+Pretrage mogu također pokazati:
+•	 smanjenje fosfata u krvi
+Ostale moguće nuspojave
+Sljedeće nuspojave su česte (mogu se javiti u do 10 na svakih 
+100 bolesnika):
+•	 glavobolja, bol u trbuhu, umor, nadutost, vjetrovi, gubitak koštane 
+mase
+Pretrage mogu također pokazati:
+•	 tegobe s jetrom
+Sljedeće nuspojave su manje česte (mogu se javiti u do 1 na svakih 
+100 bolesnika):
+•	 oštećenje mišića, bol ili slabost u mišićima
+Pretrage mogu također pokazati:
+•	 smanjenu razinu kalija u krvi
+•	 povišenu razinu kreatinina u krvi
+•	 tegobe s gušteračom
+Oštećenje mišića, omekšanje kostiju (uz bol u kostima i ponekad 
+posljedičnim prijelomom kostiju), bol u mišićima, slabost mišića i 
+smanjenje razine kalija ili fosfata u krvi mogu nastati zbog oštećenja 
+stanica bubrežnih kanalića.
+Sljedeće nuspojave su rijetke (mogu se javiti u do 1 na svakih 
+1000 bolesnika)
+•	 bol u trbuhu (abdomenu) uzrokovana upalom jetre
+•	 oticanje lica, usana, jezika ili grla
+Prijavljivanje nuspojava
+Ako primijetite bilo koju nuspojavu, potrebno je obavijestiti liječnika ili 
+ljekarnika. To uključuje i svaku moguću nuspojavu koja nije navedena 
+u ovoj uputi. Nuspojave možete prijaviti izravno putem nacionalnog 
+sustava za prijavu nuspojava: Agencija za lijekove i medicinske 
+proizvode (HALMED)
+Internetska stranica: www.halmed.hr ili potražite HALMED aplikaciju 
+putem Google Play ili Apple App Store trgovine. Prijavljivanjem 
+nuspojava možete pridonijeti u procjeni sigurnosti ovog lijeka.
+5.	Kako čuvati Tenofovir disoproxil Mylan
+Lijek čuvajte izvan pogleda i dohvata djece.
+Ovaj lijek se ne smije upotrijebiti nakon isteka roka valjanosti 
+navedenog na boci i kutiji iza oznake „EXP”. Rok valjanosti odnosi se 
+na zadnji dan navedenog mjeseca.
+Ne čuvati na temperaturi iznad 25 °C. Čuvati u originalnom pakiranju 
+radi zaštite od svjetlosti i vlage.
+Za boce: nakon prvog otvaranja iskoristiti u roku od 90 dana.
+Nikada nemojte nikakve lijekove bacati u otpadne vode ili kućni otpad. 
+Pitajte svog ljekarnika kako baciti lijekove koje više ne koristite. Ove će 
+mjere pomoći u očuvanju okoliša.
+6.	Sadržaj pakiranja i druge informacije
+Što Tenofovir disoproxil Mylan sadrži
+-	 Djelatna tvar je tenofovirdizoproksil. Jedna tableta lijeka Tenofovir 
+disoproxil Mylan sadrži 245 mg tenofovirdizoproksila (u obliku 
+tenofovirdizoproksilmaleata).
+-	 Drugi sastojci su mikrokristalična celuloza, laktoza hidrat 
+(pogledajte dio 2, Tenofovir disoproxil Mylan sadrži laktozu), 
+hidroksipropilceluloza, koloidni bezvodni silicijev dioksid, magnezijev 
+stearat, hipromeloza, titanijev dioksid (E171), triacetin, boja indigo 
+karmin aluminium lake (E132).
+Kako Tenofovir disoproxil Mylan izgleda i sadržaj pakiranja
+Tenofovir disoproxil Mylan 245 mg filmom obložene tablete su 
+svijetloplave, okrugle, bikonveksne s utisnutom oznakom „TN245” na 
+jednoj strani i „M” na drugoj strani.
+Ovaj je lijek dostupan u plastičnim bocama sa sigurnosnim zatvaračem 
+za djecu i zaštitnom folijom koje sadrže 30 filmom obloženih tableta i 
+u višestrukim pakiranjima s 90 filmom obloženih tableta u 3 boce od 
+kojih svaka sadrži po 30 filmom obloženih tableta. U bocama se nalazi 
+i sredstvo za sušenje. Sredstvo za sušenje se ne smije progutati.
+Tablete su dostupne i u blisterima koji sadrže 10 tableta, 30 tableta ili 
+30 x 1 (jedinična doza) tabletu.
+Na tržištu se ne moraju nalaziti sve veličine pakiranja.
+Nositelj odobrenja za stavljanje lijeka u promet
+Mylan Pharmaceuticals Limited
+Damastown Industrial Park, 
+Mulhuddart, Dublin 15, 
+DUBLIN
+Irska
+Proizvođač
+Mylan Hungary Kft
+Mylan utca 1,
+Komarom, H-2900,
+Mađarska
+Za sve informacije o ovom lijeku obratite se lokalnom predstavniku 
+nositelja odobrenja za stavljanje lijeka u promet:
+Hrvatska
+Viatris Hrvatska d.o.o. 
+Tel: + 385 1 23 50 599
+Ova uputa je zadnji puta revidirana u lipnju 2024.
+Detaljnije informacije o ovom lijeku dostupne su na internetskoj stranici 
+Europske agencije za lijekove: http://www.ema.europa.eu.
+3529256
+75104595
+Date / Remarks
+Date / Remarks
+Date / Remarks
+Date / Remarks
+Date / Remarks
+Date / Remarks
+24.06.2024 - Artwork Revised
+Date / Remarks
+Date / Remarks
+Sign, Date
+OR
+Digital Signature
+Sign, Date
+OR
+Digital Signature
+Sign, Date
+OR
+Digital Signature
+Sign, Date
+OR
+Digital Signature
+Sign, Date
+OR
+Digital Signature
+dd / mm / yy
+dd / mm / yy
+2 of 2
+KEYLINE
+NA
+BLACK
+100%
+03/07/24  14:00
+3529256
+3529256
+3185776
+NA
+EU/1/16/1129/001
+400535542
+Mylan Laboratories Ltd. , FDF 3
+(Pithampur, Dhar Dist., M.P. - IN)
+NA
+NA
+1
+NA
+NA
+Helvetica Neue LT Pro
+NA
+10 pt
+Safety
+NA
+NA
+Adobe InDesign 2024
+Croatia
+LIT(BOT)TENO DISO MYL TABLET 245MG HR V7
+75104595
+75098182
+Printed Literature
+1
+Flat - 360 x 420 mm
+Folded - 36 x 60 mm
+NA
+NA
+NA
+40gsm ITC Tribeni Paper
+Supply in folded form as proposed size with tape
+Reference SOP-000459814 
+ 
+ 
+ 
+ 
+ 
+FORM-000644250 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Version 3.0 
+#Note: This artwork is electronically signed through TrackWise/GLAMS, hence wet ink/digital signatures are not done/required.
+
+--- [SAMPLE] EXTRACTED TEXT ---
+[PAGE DOES NOT EXIST IN SAMPLE]
+----------------------------------------------------------------------

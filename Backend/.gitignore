@@ -1,0 +1,45 @@
+# Debug PDFs
+Data/Test2 Master_Blocks_Debug.pdf
+
+# Virtual environment
+GlobalVision/
+venv/
+.venv/
+
+# Python cache/compiled files
+__pycache__/
+*.py[cod]
+
+# OS-generated files
+.DS_Store
+Thumbs.db
+
+# Logs and runtime artifacts
+artifacts/logs/
+artifacts/temp/
+artifacts/cache/
+
+# Generated outputs
+Data/Output/
+webapp_outputs/
+webapp_uploads/
+
+# Test PDFs (keep if you don't want sample PDFs in Git)
+Data/Master/*.pdf
+Data/Sample/*.pdf
+
+# IDE
+.vscode/
+.idea/
+*.code-workspace
+
+# Environment variables
+.env
+
+# Notebooks
+Notebooks/
+.ipynb_checkpoints/
+
+# Reports
+reports/
+*.log

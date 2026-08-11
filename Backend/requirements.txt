@@ -1,0 +1,11 @@
+opencv-python
+numpy
+scikit-image
+PyMuPDF
+matplotlib
+pandas
+openpyxl
+rapidfuzz
+Pillow
+scipy
+pytesseract
