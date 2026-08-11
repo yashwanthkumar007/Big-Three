@@ -55,6 +55,12 @@ export default function PdfViewer({
   const containerRef =
     useRef<HTMLDivElement | null>(null);
 
+  const pageWrapperRef =
+    useRef<HTMLDivElement | null>(null);
+
+  const highlightRef =
+    useRef<HTMLDivElement | null>(null);
+
   const [numPages, setNumPages] =
     useState<number>(0);
 
@@ -72,7 +78,7 @@ export default function PdfViewer({
 
   /*
    * ------------------------------------------------------------
-   * Reset PDF state when a different file is supplied.
+   * Reset PDF state when the file changes.
    * ------------------------------------------------------------
    */
   useEffect(() => {
@@ -84,7 +90,7 @@ export default function PdfViewer({
 
   /*
    * ------------------------------------------------------------
-   * Calculate available viewer width.
+   * Calculate available PDF width.
    * ------------------------------------------------------------
    */
   useEffect(() => {
@@ -118,13 +124,10 @@ export default function PdfViewer({
 
   /*
    * ------------------------------------------------------------
-   * Get backend bounding box.
+   * Get the correct bounding box.
    *
-   * Master:
-   *   masterBox
-   *
-   * Sample:
-   *   sampleBox
+   * Master PDF -> masterBox
+   * Sample PDF -> sampleBox
    * ------------------------------------------------------------
    */
   const bbox = getBoundingBox(
@@ -134,14 +137,7 @@ export default function PdfViewer({
 
   /*
    * ------------------------------------------------------------
-   * Backend page.
-   *
-   * Backend is expected to return:
-   *
-   * page: 1
-   * page: 2
-   * page: 3
-   *
+   * Backend page number.
    * ------------------------------------------------------------
    */
   const backendPage =
@@ -149,7 +145,7 @@ export default function PdfViewer({
 
   /*
    * ------------------------------------------------------------
-   * Make sure requested page exists.
+   * Determine which PDF page should be displayed.
    * ------------------------------------------------------------
    */
   const pageNumber =
@@ -161,7 +157,7 @@ export default function PdfViewer({
 
   /*
    * ------------------------------------------------------------
-   * Scale backend coordinates to rendered PDF.
+   * Scale backend coordinates to displayed PDF.
    * ------------------------------------------------------------
    */
   const scaleX =
@@ -203,6 +199,91 @@ export default function PdfViewer({
       ? bbox.height * scaleY
       : 0;
 
+  /*
+   * ------------------------------------------------------------
+   * Automatically scroll to the selected difference.
+   *
+   * This happens whenever the user clicks another row.
+   * ------------------------------------------------------------
+   */
+  useEffect(() => {
+    if (
+      !selectedDifference ||
+      !bbox ||
+      !highlightRef.current ||
+      !containerRef.current
+    ) {
+      return;
+    }
+
+    /*
+     * Wait until the PDF page and highlight
+     * have finished rendering.
+     */
+    const timeout = window.setTimeout(() => {
+      if (
+        !highlightRef.current ||
+        !containerRef.current
+      ) {
+        return;
+      }
+
+      const highlight =
+        highlightRef.current;
+
+      const container =
+        containerRef.current;
+
+      const highlightRect =
+        highlight.getBoundingClientRect();
+
+      const containerRect =
+        container.getBoundingClientRect();
+
+      /*
+       * Current scroll position.
+       */
+      const currentScrollTop =
+        container.scrollTop;
+
+      /*
+       * Position of the difference
+       * relative to the PDF viewer.
+       */
+      const differenceTop =
+        highlightRect.top -
+        containerRect.top +
+        currentScrollTop;
+
+      /*
+       * Center the difference vertically
+       * inside the viewer.
+       */
+      const targetScrollTop =
+        differenceTop -
+        container.clientHeight / 2 +
+        highlightRect.height / 2;
+
+      container.scrollTo({
+        top: Math.max(
+          0,
+          targetScrollTop
+        ),
+        behavior: "smooth",
+      });
+    }, 150);
+
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [
+    selectedDifference,
+    bbox,
+    pageNumber,
+    renderedPageWidth,
+    renderedPageHeight,
+  ]);
+
   return (
     <Box
       ref={containerRef}
@@ -223,24 +304,14 @@ export default function PdfViewer({
       }}
     >
       <Document
-        /*
-         * IMPORTANT:
-         *
-         * Do NOT create a blob URL here.
-         *
-         * Pass the File object directly.
-         */
         file={file}
         loading={
           <Box
             sx={{
               mt: 10,
-
               display: "flex",
               flexDirection: "column",
-
               alignItems: "center",
-
               gap: 2,
             }}
           >
@@ -280,13 +351,7 @@ export default function PdfViewer({
           </Box>
         }
         onLoadSuccess={({ numPages }) => {
-          console.log(
-            `${side} PDF loaded successfully`,
-            numPages
-          );
-
           setNumPages(numPages);
-
           setPdfError(null);
         }}
         onLoadError={(error) => {
@@ -295,43 +360,31 @@ export default function PdfViewer({
               ? error.message
               : String(error);
 
+          setPdfError(message);
+
           console.error(
             `${side} PDF loading error:`,
             error
           );
-
-          setPdfError(message);
         }}
       >
         <Box
+          ref={pageWrapperRef}
           sx={{
             position: "relative",
-
             display: "inline-block",
-
             lineHeight: 0,
-
             bgcolor: "#FFFFFF",
-
             boxShadow:
               "0 2px 8px rgba(0,0,0,0.15)",
           }}
         >
           <Page
             pageNumber={pageNumber}
-            width={
-              pageWidth ??
-              undefined
-            }
+            width={pageWidth ?? undefined}
             renderAnnotationLayer
             renderTextLayer
             onRenderSuccess={(page) => {
-              console.log(
-                `${side} page rendered`,
-                page.width,
-                page.height
-              );
-
               setRenderedPageWidth(
                 page.width
               );
@@ -343,11 +396,12 @@ export default function PdfViewer({
           />
 
           {/* =====================================================
-              DIFFERENCE HIGHLIGHT
+              SELECTED DIFFERENCE HIGHLIGHT
              ===================================================== */}
 
           {bbox && (
             <Box
+              ref={highlightRef}
               sx={{
                 position: "absolute",
 
@@ -364,22 +418,25 @@ export default function PdfViewer({
                   `${highlightHeight}px`,
 
                 /*
-                 * Outline around the difference.
+                 * Thin outline.
                  */
                 border:
-                  "3px solid #2A276E",
+                  "1.5px solid #c63737",
 
                 /*
-                 * Very light background so the
-                 * original PDF remains visible.
+                 * Very light background.
                  */
                 backgroundColor:
-                  "rgba(42, 39, 110, 0.10)",
+                  "rgba(42, 39, 110, 0.06)",
 
+                /*
+                 * Small outer glow so it remains
+                 * visible without being too thick.
+                 */
                 boxShadow:
-                  "0 0 0 2px rgba(255,255,255,0.9)",
+                  "0 0 0 1px rgba(255,255,255,0.8)",
 
-                borderRadius: "3px",
+                borderRadius: "2px",
 
                 pointerEvents: "none",
 
@@ -389,7 +446,7 @@ export default function PdfViewer({
                   "border-box",
 
                 transition:
-                  "all 0.2s ease",
+                  "left 0.2s ease, top 0.2s ease",
               }}
             />
           )}
