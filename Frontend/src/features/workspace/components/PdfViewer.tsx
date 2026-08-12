@@ -28,6 +28,10 @@ type PdfViewerProps = {
   selectedDifference?: InspectionDifference | null;
   naturalWidth?: number;
   naturalHeight?: number;
+  zeroBasedPageIndex?: boolean;
+  pageNumber?: number;
+  zoom?: number;
+  onNumPagesChange?: (numPages: number) => void;
 };
 
 const getBoundingBox = (
@@ -51,6 +55,10 @@ export default function PdfViewer({
   selectedDifference,
   naturalWidth,
   naturalHeight,
+  zeroBasedPageIndex = false,
+  pageNumber: requestedPageNumberFromToolbar,
+  zoom = 100,
+  onNumPagesChange,
 }: PdfViewerProps) {
   const containerRef =
     useRef<HTMLDivElement | null>(null);
@@ -75,18 +83,6 @@ export default function PdfViewer({
 
   const [pdfError, setPdfError] =
     useState<string | null>(null);
-
-  /*
-   * ------------------------------------------------------------
-   * Reset PDF state when the file changes.
-   * ------------------------------------------------------------
-   */
-  useEffect(() => {
-    setNumPages(0);
-    setPdfError(null);
-    setRenderedPageWidth(null);
-    setRenderedPageHeight(null);
-  }, [file]);
 
   /*
    * ------------------------------------------------------------
@@ -135,13 +131,30 @@ export default function PdfViewer({
     side
   );
 
+  const hasSelectedDifference =
+    Boolean(selectedDifference);
+
+  const showMissingCoordinatesNotice =
+    hasSelectedDifference && !bbox;
+
   /*
    * ------------------------------------------------------------
    * Backend page number.
    * ------------------------------------------------------------
    */
-  const backendPage =
-    selectedDifference?.page ?? 1;
+  const requestedPageNumberFromDifference =
+    selectedDifference &&
+    (selectedDifference.page ||
+      selectedDifference.page === 0)
+      ? zeroBasedPageIndex
+        ? selectedDifference.page + 1
+        : selectedDifference.page
+      : null;
+
+  const requestedPageNumber =
+    requestedPageNumberFromDifference !== null
+      ? requestedPageNumberFromDifference
+      : requestedPageNumberFromToolbar ?? 1;
 
   /*
    * ------------------------------------------------------------
@@ -150,10 +163,14 @@ export default function PdfViewer({
    */
   const pageNumber =
     numPages > 0 &&
-    backendPage >= 1 &&
-    backendPage <= numPages
-      ? backendPage
+    requestedPageNumber >= 1 &&
+    requestedPageNumber <= numPages
+      ? requestedPageNumber
       : 1;
+
+  useEffect(() => {
+    onNumPagesChange?.(numPages || 1);
+  }, [numPages, onNumPagesChange]);
 
   /*
    * ------------------------------------------------------------
@@ -217,61 +234,23 @@ export default function PdfViewer({
     }
 
     /*
-     * Wait until the PDF page and highlight
-     * have finished rendering.
+     * Wait for layout settle, then center the actual target box
+     * inside the scroll container on both axes.
      */
     const timeout = window.setTimeout(() => {
-      if (
-        !highlightRef.current ||
-        !containerRef.current
-      ) {
-        return;
-      }
-
       const highlight =
         highlightRef.current;
 
-      const container =
-        containerRef.current;
+      if (!highlight) {
+        return;
+      }
 
-      const highlightRect =
-        highlight.getBoundingClientRect();
-
-      const containerRect =
-        container.getBoundingClientRect();
-
-      /*
-       * Current scroll position.
-       */
-      const currentScrollTop =
-        container.scrollTop;
-
-      /*
-       * Position of the difference
-       * relative to the PDF viewer.
-       */
-      const differenceTop =
-        highlightRect.top -
-        containerRect.top +
-        currentScrollTop;
-
-      /*
-       * Center the difference vertically
-       * inside the viewer.
-       */
-      const targetScrollTop =
-        differenceTop -
-        container.clientHeight / 2 +
-        highlightRect.height / 2;
-
-      container.scrollTo({
-        top: Math.max(
-          0,
-          targetScrollTop
-        ),
+      highlight.scrollIntoView({
         behavior: "smooth",
+        block: "center",
+        inline: "center",
       });
-    }, 150);
+    }, 200);
 
     return () => {
       window.clearTimeout(timeout);
@@ -282,6 +261,25 @@ export default function PdfViewer({
     pageNumber,
     renderedPageWidth,
     renderedPageHeight,
+  ]);
+
+  useEffect(() => {
+    if (
+      !selectedDifference ||
+      bbox ||
+      !containerRef.current
+    ) {
+      return;
+    }
+
+    containerRef.current.scrollTo({
+      top: 0,
+      behavior: "smooth",
+    });
+  }, [
+    selectedDifference,
+    bbox,
+    pageNumber,
   ]);
 
   return (
@@ -304,6 +302,7 @@ export default function PdfViewer({
       }}
     >
       <Document
+        key={`${file.name}-${file.lastModified}-${file.size}`}
         file={file}
         loading={
           <Box
@@ -380,8 +379,13 @@ export default function PdfViewer({
           }}
         >
           <Page
+            key={`page-${pageNumber}`}
             pageNumber={pageNumber}
-            width={pageWidth ?? undefined}
+            width={
+              pageWidth
+                ? (pageWidth * zoom) / 100
+                : undefined
+            }
             renderAnnotationLayer
             renderTextLayer
             onRenderSuccess={(page) => {
@@ -484,6 +488,35 @@ export default function PdfViewer({
             }}
           >
             Page {pageNumber} / {numPages}
+          </Typography>
+        </Box>
+      )}
+
+      {showMissingCoordinatesNotice && (
+        <Box
+          sx={{
+            position: "absolute",
+            left: 20,
+            top: 20,
+            px: 1.5,
+            py: 0.75,
+            bgcolor:
+              "rgba(255,255,255,0.95)",
+            border:
+              "1px solid #e1b200",
+            borderRadius: 1,
+            boxShadow: 1,
+            zIndex: 30,
+          }}
+        >
+          <Typography
+            variant="caption"
+            sx={{
+              color: "#8a6d00",
+              fontWeight: 600,
+            }}
+          >
+            No coordinates available for this {side} difference.
           </Typography>
         </Box>
       )}

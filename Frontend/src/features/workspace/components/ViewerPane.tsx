@@ -1,3 +1,5 @@
+import { useEffect, useMemo, useState } from "react";
+
 import { Box, Paper, Typography } from "@mui/material";
 
 import PdfToolbar from "./PdfToolbar";
@@ -12,6 +14,7 @@ type ViewerPaneProps = {
   selectedDifference?: InspectionDifference | null;
   naturalWidth?: number;
   naturalHeight?: number;
+  zeroBasedPageIndex?: boolean;
 };
 
 export default function ViewerPane({
@@ -22,7 +25,72 @@ export default function ViewerPane({
   selectedDifference,
   naturalWidth,
   naturalHeight,
+  zeroBasedPageIndex,
 }: ViewerPaneProps) {
+  const [pageNumber, setPageNumber] =
+    useState(1);
+
+  const [numPages, setNumPages] =
+    useState(1);
+
+  const [zoom, setZoom] = useState(100);
+
+  const selectedPageNumber = useMemo(() => {
+    if (!selectedDifference?.page && selectedDifference?.page !== 0) {
+      return null;
+    }
+
+    return zeroBasedPageIndex
+      ? selectedDifference.page + 1
+      : selectedDifference.page;
+  }, [selectedDifference, zeroBasedPageIndex]);
+
+  useEffect(() => {
+    setPageNumber(1);
+    setZoom(100);
+  }, [file]);
+
+  useEffect(() => {
+    if (
+      selectedPageNumber &&
+      selectedPageNumber >= 1
+    ) {
+      setPageNumber(selectedPageNumber);
+    }
+  }, [selectedPageNumber]);
+
+  const clampPage = (page: number) => {
+    if (numPages <= 0) {
+      return 1;
+    }
+
+    return Math.max(1, Math.min(numPages, page));
+  };
+
+  useEffect(() => {
+    setPageNumber((current) =>
+      clampPage(current)
+    );
+  }, [numPages]);
+
+  const fitPageZoom =
+    naturalWidth && naturalHeight
+      ? Math.max(
+          25,
+          Math.min(
+            100,
+            Math.round(
+              (naturalWidth /
+                Math.max(
+                  naturalWidth,
+                  naturalHeight
+                )) *
+                100
+            )
+          )
+        )
+      : 100;
+
   return (
     <Paper
       elevation={0}
@@ -77,7 +145,24 @@ export default function ViewerPane({
 
       {/* ================= Toolbar ================= */}
 
-      <PdfToolbar />
+      <PdfToolbar
+        pageNumber={clampPage(pageNumber)}
+        numPages={Math.max(1, numPages)}
+        zoom={zoom}
+        onPageChange={(page) => {
+          setPageNumber(clampPage(page));
+        }}
+        onZoomChange={(nextZoom) => {
+          setZoom(
+            Math.max(
+              25,
+              Math.min(300, nextZoom)
+            )
+          );
+        }}
+        onFitWidth={() => setZoom(100)}
+        onFitPage={() => setZoom(fitPageZoom)}
+      />
 
       {/* ================= PDF ================= */}
 
@@ -95,6 +180,10 @@ export default function ViewerPane({
           selectedDifference={selectedDifference}
           naturalWidth={naturalWidth}
           naturalHeight={naturalHeight}
+          zeroBasedPageIndex={zeroBasedPageIndex}
+          pageNumber={clampPage(pageNumber)}
+          zoom={zoom}
+          onNumPagesChange={setNumPages}
         />
       </Box>
     </Paper>
