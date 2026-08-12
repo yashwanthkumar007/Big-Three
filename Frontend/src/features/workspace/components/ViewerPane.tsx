@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
-
+import { useMemo, useState } from "react";
+ 
 import { Box, Paper, Typography } from "@mui/material";
-
+ 
 import PdfToolbar from "./PdfToolbar";
 import PdfViewer from "./PdfViewer";
 import type { InspectionDifference } from "./InspectionResults";
-
+ 
 type ViewerPaneProps = {
   title: string;
   file: File;
@@ -16,7 +16,7 @@ type ViewerPaneProps = {
   naturalHeight?: number;
   zeroBasedPageIndex?: boolean;
 };
-
+ 
 export default function ViewerPane({
   title,
   file,
@@ -27,52 +27,38 @@ export default function ViewerPane({
   naturalHeight,
   zeroBasedPageIndex,
 }: ViewerPaneProps) {
-  const [pageNumber, setPageNumber] =
+  const [manualPageNumber, setManualPageNumber] =
     useState(1);
-
+ 
   const [numPages, setNumPages] =
     useState(1);
-
+ 
   const [zoom, setZoom] = useState(100);
-
+ 
   const selectedPageNumber = useMemo(() => {
     if (!selectedDifference?.page && selectedDifference?.page !== 0) {
       return null;
     }
-
+ 
     return zeroBasedPageIndex
       ? selectedDifference.page + 1
       : selectedDifference.page;
   }, [selectedDifference, zeroBasedPageIndex]);
-
-  useEffect(() => {
-    setPageNumber(1);
-    setZoom(100);
-  }, [file]);
-
-  useEffect(() => {
-    if (
-      selectedPageNumber &&
-      selectedPageNumber >= 1
-    ) {
-      setPageNumber(selectedPageNumber);
-    }
-  }, [selectedPageNumber]);
-
+ 
   const clampPage = (page: number) => {
     if (numPages <= 0) {
       return 1;
     }
-
+ 
     return Math.max(1, Math.min(numPages, page));
   };
-
-  useEffect(() => {
-    setPageNumber((current) =>
-      clampPage(current)
-    );
-  }, [numPages]);
-
+ 
+  const effectivePageNumber =
+    selectedPageNumber &&
+    selectedPageNumber >= 1
+      ? clampPage(selectedPageNumber)
+      : clampPage(manualPageNumber);
+ 
   const fitPageZoom =
     naturalWidth && naturalHeight
       ? Math.max(
@@ -90,7 +76,7 @@ export default function ViewerPane({
           )
         )
       : 100;
-
+ 
   return (
     <Paper
       elevation={0}
@@ -103,7 +89,7 @@ export default function ViewerPane({
       }}
     >
       {/* ================= Header ================= */}
-
+ 
       <Box
         sx={{
           px: 3,
@@ -119,7 +105,7 @@ export default function ViewerPane({
         >
           {title}
         </Typography>
-
+ 
         <Typography
           variant="body2"
           color="text.secondary"
@@ -134,7 +120,7 @@ export default function ViewerPane({
         >
           {file.name}
         </Typography>
-
+ 
         <Typography
           variant="caption"
           color="text.secondary"
@@ -142,15 +128,15 @@ export default function ViewerPane({
           {(file.size / (1024 * 1024)).toFixed(2)} MB
         </Typography>
       </Box>
-
+ 
       {/* ================= Toolbar ================= */}
-
+ 
       <PdfToolbar
-        pageNumber={clampPage(pageNumber)}
+        pageNumber={effectivePageNumber}
         numPages={Math.max(1, numPages)}
         zoom={zoom}
         onPageChange={(page) => {
-          setPageNumber(clampPage(page));
+          setManualPageNumber(clampPage(page));
         }}
         onZoomChange={(nextZoom) => {
           setZoom(
@@ -163,9 +149,9 @@ export default function ViewerPane({
         onFitWidth={() => setZoom(100)}
         onFitPage={() => setZoom(fitPageZoom)}
       />
-
+ 
       {/* ================= PDF ================= */}
-
+ 
       <Box
         sx={{
           flex: 1,
@@ -181,7 +167,7 @@ export default function ViewerPane({
           naturalWidth={naturalWidth}
           naturalHeight={naturalHeight}
           zeroBasedPageIndex={zeroBasedPageIndex}
-          pageNumber={clampPage(pageNumber)}
+          pageNumber={effectivePageNumber}
           zoom={zoom}
           onNumPagesChange={setNumPages}
         />
