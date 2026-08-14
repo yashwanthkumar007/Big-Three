@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   Box,
   CircularProgress,
+  Tooltip,
   Typography,
 } from "@mui/material";
 
@@ -298,7 +299,7 @@ export default function PdfViewer({
 
         p: 3,
 
-        bgcolor: "#CFCFCF",
+        bgcolor: "#FFFFFF",
       }}
     >
       <Document
@@ -404,55 +405,137 @@ export default function PdfViewer({
              ===================================================== */}
 
           {bbox && (
-            <Box
-              ref={highlightRef}
-              sx={{
-                position: "absolute",
+            <Tooltip
+              title={
+                <Box>
+                  <Typography
+                    variant="caption"
+                    sx={{
+                      fontWeight: 700,
+                      color: "#2A276E",
+                      display: "block",
+                    }}
+                  >
+                    Difference #{selectedDifference?.id}
+                  </Typography>
+                  <Typography
+                    variant="caption"
+                    sx={{
+                      display: "block",
+                      color: "#3f4650",
+                      mb: 0.5,
+                    }}
+                  >
+                    {selectedDifference?.comment ||
+                      selectedDifference?.type ||
+                      "No reason available"}
+                  </Typography>
 
-                left:
-                  `${highlightLeft}px`,
+                  <Typography
+                    variant="caption"
+                    sx={{
+                      display: "block",
+                      color: "#50575e",
+                      fontWeight: 600,
+                    }}
+                  >
+                    Original:{" "}
+                    <Box
+                      component="span"
+                      sx={{ fontWeight: 400 }}
+                    >
+                      {selectedDifference?.master || "—"}
+                    </Box>
+                  </Typography>
 
-                top:
-                  `${highlightTop}px`,
-
-                width:
-                  `${highlightWidth}px`,
-
-                height:
-                  `${highlightHeight}px`,
-
-                /*
-                 * Thin outline.
-                 */
-                border:
-                  "1.5px solid #c63737",
-
-                /*
-                 * Very light background.
-                 */
-                backgroundColor:
-                  "rgba(42, 39, 110, 0.06)",
-
-                /*
-                 * Small outer glow so it remains
-                 * visible without being too thick.
-                 */
-                boxShadow:
-                  "0 0 0 1px rgba(255,255,255,0.8)",
-
-                borderRadius: "2px",
-
-                pointerEvents: "none",
-
-                zIndex: 20,
-
-                boxSizing:
-                  "border-box",
-
-                transition:
-                  "left 0.2s ease, top 0.2s ease",
+                  <Typography
+                    variant="caption"
+                    sx={{
+                      display: "block",
+                      color: "#50575e",
+                      fontWeight: 600,
+                    }}
+                  >
+                    Sample:{" "}
+                    <Box
+                      component="span"
+                      sx={{ fontWeight: 400 }}
+                    >
+                      {selectedDifference?.sample || "—"}
+                    </Box>
+                  </Typography>
+                </Box>
+              }
+              arrow
+              placement="top"
+              slotProps={{
+                tooltip: {
+                  sx: {
+                    bgcolor: "#FFFFFF",
+                    color: "#3f4650",
+                    border: "1px solid #d5d9dd",
+                    boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+                  },
+                },
+                arrow: {
+                  sx: {
+                    color: "#FFFFFF",
+                  },
+                },
               }}
-            />
+            >
+              <Box
+                ref={highlightRef}
+                sx={{
+                  position: "absolute",
+
+                  left:
+                    `${highlightLeft}px`,
+
+                  top:
+                    `${highlightTop}px`,
+
+                  width:
+                    `${highlightWidth}px`,
+
+                  height:
+                    `${highlightHeight}px`,
+
+                  /*
+                   * Thin outline.
+                   */
+                  border:
+                    "1.5px solid #c63737",
+
+                  /*
+                   * Very light background.
+                   */
+                  backgroundColor:
+                    "rgba(246, 246, 247, 0.06)",
+
+                  /*
+                   * Small outer glow so it remains
+                   * visible without being too thick.
+                   */
+                  boxShadow:
+                    "0 0 0 1px rgba(255,255,255,0.8)",
+
+                  borderRadius: "2px",
+
+                  pointerEvents: "auto",
+
+                  cursor: "pointer",
+
+                  zIndex: 20,
+
+                  boxSizing:
+                    "border-box",
+
+                  transition:
+                    "left 0.2s ease, top 0.2s ease",
+                }}
+              />
+            </Tooltip>
           )}
         </Box>
       </Document>

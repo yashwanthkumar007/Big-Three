@@ -3,6 +3,7 @@ import { useState } from "react";
 import {
   Box,
   Checkbox,
+  Divider,
   FormControl,
   IconButton,
   MenuItem,
@@ -15,6 +16,7 @@ import {
   TableHead,
   TableRow,
   TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
 
@@ -25,9 +27,16 @@ import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
 import VisibilityOffTwoToneIcon from "@mui/icons-material/VisibilityOffTwoTone";
 import ArrowBackOutlinedIcon from "@mui/icons-material/ArrowBackOutlined";
 import ArrowForwardOutlinedIcon from "@mui/icons-material/ArrowForwardOutlined";
+import ShareIcon from "@mui/icons-material/Share";
+import ZoomInIcon from "@mui/icons-material/ZoomIn";
+import SwapHorizIcon from "@mui/icons-material/SwapHoriz";
+import FormatListBulletedIcon from "@mui/icons-material/FormatListBulleted";
+import DownloadIcon from "@mui/icons-material/Download";
+import CompareIcon from "@mui/icons-material/Compare";
 
 import ViewerPane from "./ViewerPane";
 import type { BoundingBox } from "@/shared/api/textInspectionApi";
+import { truncateFileName } from "@/shared/utils/truncateFileName";
 
 export type DifferenceType =
   | "Change"
@@ -97,7 +106,7 @@ export default function InspectionResults({
   onDifferenceSelect,
 }: InspectionResultsProps) {
   const [internalSelectedId, setInternalSelectedId] = useState<number | null>(
-    result.differences[0]?.id ?? null
+    null
   );
 
   const effectiveSelectedId =
@@ -105,7 +114,6 @@ export default function InspectionResults({
 
   const selectedDifferenceData =
     result.differences.find((difference) => difference.id === effectiveSelectedId) ??
-    result.differences[0] ??
     null;
 
   const handleSelect = (difference: InspectionDifference) => {
@@ -194,7 +202,7 @@ export default function InspectionResults({
           }}
           title={result.masterFileName}
         >
-          {result.masterFileName}
+          {truncateFileName(result.masterFileName)}
         </Typography>
 
         {/* Sample */}
@@ -223,8 +231,112 @@ export default function InspectionResults({
           }}
           title={result.sampleFileName}
         >
-          {result.sampleFileName}
+          {truncateFileName(result.sampleFileName)}
         </Typography>
+
+        {/* Action Icons */}
+
+        <Divider
+          orientation="vertical"
+          flexItem
+          sx={{ mx: 1 }}
+        />
+
+        <Tooltip title="Share" arrow>
+          <IconButton
+            size="small"
+            sx={{
+              bgcolor: "#2A276E",
+              color: "#ffffff",
+              mx: 0.25,
+              "&:hover": {
+                bgcolor: "#1f1d57",
+              },
+            }}
+          >
+            <ShareIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
+
+        <Tooltip title="Zoom" arrow>
+          <IconButton
+            size="small"
+            sx={{
+              bgcolor: "#2A276E",
+              color: "#ffffff",
+              mx: 0.25,
+              "&:hover": {
+                bgcolor: "#1f1d57",
+              },
+            }}
+          >
+            <ZoomInIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
+
+        <Tooltip title="Change the sample" arrow>
+          <IconButton
+            size="small"
+            sx={{
+              bgcolor: "#2A276E",
+              color: "#ffffff",
+              mx: 0.25,
+              "&:hover": {
+                bgcolor: "#1f1d57",
+              },
+            }}
+          >
+            <SwapHorizIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
+
+        <Tooltip title="Annotation list" arrow>
+          <IconButton
+            size="small"
+            sx={{
+              bgcolor: "#2A276E",
+              color: "#ffffff",
+              mx: 0.25,
+              "&:hover": {
+                bgcolor: "#1f1d57",
+              },
+            }}
+          >
+            <FormatListBulletedIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
+
+        <Tooltip title="Download the PDF report" arrow>
+          <IconButton
+            size="small"
+            sx={{
+              bgcolor: "#2A276E",
+              color: "#ffffff",
+              mx: 0.25,
+              "&:hover": {
+                bgcolor: "#1f1d57",
+              },
+            }}
+          >
+            <DownloadIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
+
+        <Tooltip title="Open difference list" arrow>
+          <IconButton
+            size="small"
+            sx={{
+              bgcolor: "#2A276E",
+              color: "#ffffff",
+              mx: 0.25,
+              "&:hover": {
+                bgcolor: "#1f1d57",
+              },
+            }}
+          >
+            <CompareIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
       </Box>
 
       {/* =========================================================
@@ -619,6 +731,7 @@ export default function InspectionResults({
           bgcolor: "#f5f5f5",
           overflow: "hidden",
           minHeight: 0,
+          gap: selectedDifferenceData ? 2 : 0,
         }}
       >
         <Box
@@ -636,12 +749,12 @@ export default function InspectionResults({
             selectedDifference={selectedDifferenceData}
             naturalWidth={
               result.pages?.find(
-                (p) => p.page === (selectedDifferenceData.page ?? 0)
+                (p) => p.page === (selectedDifferenceData?.page ?? 0)
               )?.masterWidth
             }
             naturalHeight={
               result.pages?.find(
-                (p) => p.page === (selectedDifferenceData.page ?? 0)
+                (p) => p.page === (selectedDifferenceData?.page ?? 0)
               )?.masterHeight
             }
           />
@@ -662,12 +775,12 @@ export default function InspectionResults({
             selectedDifference={selectedDifferenceData}
             naturalWidth={
               result.pages?.find(
-                (p) => p.page === (selectedDifferenceData.page ?? 0)
+                (p) => p.page === (selectedDifferenceData?.page ?? 0)
               )?.sampleWidth
             }
             naturalHeight={
               result.pages?.find(
-                (p) => p.page === (selectedDifferenceData.page ?? 0)
+                (p) => p.page === (selectedDifferenceData?.page ?? 0)
               )?.sampleHeight
             }
           />

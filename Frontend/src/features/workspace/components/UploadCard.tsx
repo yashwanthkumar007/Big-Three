@@ -20,6 +20,7 @@ import DescriptionOutlinedIcon from "@mui/icons-material/DescriptionOutlined";
 
 import { useUploadStore } from "@/store/uploadStore";
 import type { InspectionType } from "@/store/uploadStore";
+import { truncateFileName } from "@/shared/utils/truncateFileName";
 
 import {
   TEXT_INSPECTION_FILE_TYPES,
@@ -362,6 +363,7 @@ export default function UploadCard({
             <Typography
               variant="body1"
               noWrap
+              title={master.name}
               sx={{
                 fontWeight: 500,
                 textAlign: "center",
@@ -371,7 +373,7 @@ export default function UploadCard({
                 whiteSpace: "nowrap"
               }}
             >
-              {master.name}
+              {truncateFileName(master.name)}
             </Typography>
 
             <Typography
@@ -528,6 +530,7 @@ export default function UploadCard({
             <Typography
               variant="body1"
               noWrap
+              title={sample.name}
               sx={{
                 fontWeight: 600,
                 textAlign: "center",
@@ -537,7 +540,7 @@ export default function UploadCard({
                 whiteSpace: "nowrap"
               }}
             >
-              {sample.name}
+              {truncateFileName(sample.name)}
             </Typography>
 
             <Typography

@@ -1,4 +1,5 @@
 import { Box, Typography } from "@mui/material";
+import { truncateFileName } from "@/shared/utils/truncateFileName";
 
 type WorkspaceToolbarProps = {
   masterFileName: string;
@@ -62,6 +63,7 @@ export default function WorkspaceToolbar({
         <Typography
           variant="body2"
           noWrap
+          title={masterFileName}
           sx={{
             maxWidth: 220,
             overflow: "hidden",
@@ -69,7 +71,7 @@ export default function WorkspaceToolbar({
             whiteSpace: "nowrap",
           }}
         >
-          {masterFileName}
+          {truncateFileName(masterFileName)}
         </Typography>
       </Box>
 
@@ -89,6 +91,7 @@ export default function WorkspaceToolbar({
         <Typography
           variant="body2"
           noWrap
+          title={sampleFileName}
           sx={{
             maxWidth: 220,
             overflow: "hidden",
@@ -96,7 +99,7 @@ export default function WorkspaceToolbar({
             whiteSpace: "nowrap",
           }}
         >
-          {sampleFileName}
+          {truncateFileName(sampleFileName)}
         </Typography>
       </Box>
     </Box>

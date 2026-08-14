@@ -25,6 +25,7 @@ import InspectionResults, {
 } from "./components/InspectionResults";
 
 import { useUploadStore } from "@/store/uploadStore";
+import { truncateFileName } from "@/shared/utils/truncateFileName";
 
 import { startTextInspection } from "@/shared/api/textInspectionApi";
 
@@ -497,6 +498,7 @@ export default function WorkspacePage() {
               <Typography
                 variant="body2"
                 noWrap
+                title={masterFile.name}
                 sx={{
                   maxWidth: 300,
 
@@ -509,7 +511,7 @@ export default function WorkspacePage() {
                     "nowrap",
                 }}
               >
-                {masterFile.name}
+                {truncateFileName(masterFile.name)}
               </Typography>
             </Box>
 
@@ -540,6 +542,7 @@ export default function WorkspacePage() {
               <Typography
                 variant="body2"
                 noWrap
+                title={sampleFile.name}
                 sx={{
                   maxWidth: 300,
 
@@ -552,7 +555,7 @@ export default function WorkspacePage() {
                     "nowrap",
                 }}
               >
-                {sampleFile.name}
+                {truncateFileName(sampleFile.name)}
               </Typography>
             </Box>
           </Box>

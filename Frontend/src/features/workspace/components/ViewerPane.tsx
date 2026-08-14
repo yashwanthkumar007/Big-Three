@@ -5,6 +5,7 @@ import { Box, Paper, Typography } from "@mui/material";
 import PdfToolbar from "./PdfToolbar";
 import PdfViewer from "./PdfViewer";
 import type { InspectionDifference } from "./InspectionResults";
+import { truncateFileName } from "@/shared/utils/truncateFileName";
  
 type ViewerPaneProps = {
   title: string;
@@ -34,6 +35,24 @@ export default function ViewerPane({
     useState(1);
  
   const [zoom, setZoom] = useState(100);
+  const [lastSelectedId, setLastSelectedId] =
+    useState<number | null>(null);
+
+  /*
+   * ------------------------------------------------------------
+   * When a new difference is selected, zoom to 235% so the
+   * highlighted area is clearly visible. This uses the
+   * "adjusting state during render" pattern to avoid
+   * cascading renders from effects.
+   * ------------------------------------------------------------
+   */
+  if ((selectedDifference?.id ?? null) !== lastSelectedId) {
+    setLastSelectedId(selectedDifference?.id ?? null);
+
+    if (selectedDifference) {
+      setZoom(235);
+    }
+  }
  
   const selectedPageNumber = useMemo(() => {
     if (!selectedDifference?.page && selectedDifference?.page !== 0) {
@@ -110,6 +129,7 @@ export default function ViewerPane({
           variant="body2"
           color="text.secondary"
           noWrap
+          title={file.name}
           sx={{
             mt: 0.5,
             maxWidth: "100%",
@@ -118,7 +138,7 @@ export default function ViewerPane({
             whiteSpace: "nowrap",
           }}
         >
-          {file.name}
+          {truncateFileName(file.name)}
         </Typography>
  
         <Typography

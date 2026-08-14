@@ -4,6 +4,7 @@ import { Button, TextField, Alert } from "@mui/material";
 import { useForm } from "react-hook-form";
 
 import { login } from "@/features/authentication/services/authservice";
+import { setSession } from "@/shared/utils/auth";
 
 type LoginFormData = {
   email: string;
@@ -28,8 +29,8 @@ export default function LoginForm() {
       const response = await login(data);
 
       console.log(response);
-      // Store user data in localStorage
-      localStorage.setItem("user", JSON.stringify(response.user));
+      // Store user data in localStorage with session expiry
+      setSession(response.user);
       // Navigate to dashboard on successful login
       navigate("/dashboard");
     } catch (err) {

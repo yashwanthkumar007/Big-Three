@@ -24,6 +24,7 @@ import BarcodeIcon from "./BarcodeIcon";
 import BrailleDotsIcon from "./BrailleDotsIcon";
 
 import OrganizationLogo from "@/assets/logos/viatris logo.png";
+import { clearSession } from "@/shared/utils/auth";
 
 type User = {
   id: number;
@@ -89,7 +90,7 @@ export default function Header() {
   ];
 
   const handleLogout = () => {
-    localStorage.removeItem("user");
+    clearSession();
     navigate("/login");
   };
 
