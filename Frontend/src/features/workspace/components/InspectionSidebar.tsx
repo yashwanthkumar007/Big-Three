@@ -1,5 +1,3 @@
-import { useState } from "react";
-
 import {
   Accordion,
   AccordionSummary,
@@ -18,6 +16,9 @@ import {
 } from "@mui/material";
 
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+
+import { useUploadStore } from "@/store/uploadStore";
+import type { DifferenceFilters } from "@/store/uploadStore";
 
 type InspectionSidebarProps = {
   inspectionType: string;
@@ -39,24 +40,15 @@ export default function InspectionSidebar({
   onClose,
   onInspect,
 }: InspectionSidebarProps) {
-  const [differenceFilters, setDifferenceFilters] = useState({
-    case: true,
-    change: true,
-    deletion: true,
-    hyphen: true,
-    insertion: true,
-    location: true,
-
-    bold: false,
-    color: false,
-    fontType: false,
-    space: true,
-    size: true,
-    underline: false,
-  });
+  const differenceFilters = useUploadStore(
+    (state) => state.differenceFilters
+  );
+  const setDifferenceFilters = useUploadStore(
+    (state) => state.setDifferenceFilters
+  );
 
   const handleCheckbox =
-    (name: keyof typeof differenceFilters) =>
+    (name: keyof DifferenceFilters) =>
     (event: React.ChangeEvent<HTMLInputElement>) => {
       setDifferenceFilters({
         ...differenceFilters,

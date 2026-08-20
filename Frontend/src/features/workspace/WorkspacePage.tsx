@@ -51,10 +51,13 @@ export default function WorkspacePage() {
     sampleFile,
     inspectionStatus,
     inspectionReport,
+    differenceFilters,
     setInspectionStatus,
     setInspectionReport,
     setSessionId,
     setError,
+    setMasterFile,
+    setSampleFile,
   } = useUploadStore();
 
   const {
@@ -112,6 +115,7 @@ export default function WorkspacePage() {
         masterFile,
         sampleFile,
         {
+          differenceFilters,
           onStatus: ({
             status: currentStatus,
           }) => {
@@ -139,6 +143,11 @@ export default function WorkspacePage() {
 
       setInspectionReport(report);
 
+      // Store file names in the shared store so the Difference List
+      // window can display them without needing the File objects.
+      setMasterFile(masterFile);
+      setSampleFile(sampleFile);
+
       setInspectionStatus("completed");
 
       setSelectedDifference(null);
@@ -163,11 +172,14 @@ export default function WorkspacePage() {
     masterFile,
     sampleFile,
     inspectionType,
+    differenceFilters,
     setInspectionStatus,
     setInspectionReport,
     setSessionId,
     setError,
     setStatus,
+    setMasterFile,
+    setSampleFile,
   ]);
 
   /* ------------------------------------------------------------------ */
@@ -202,8 +214,39 @@ export default function WorkspacePage() {
         return null;
       }
 
+      /*
+       * Client-side safety net — the backend already skips disabled
+       * checkers, but this guarantees the results page NEVER shows a
+       * finding type the user filtered out, even if the backend is
+       * stale or returns an unexpected type.
+       */
+      const typeToFilterKey: Record<string, keyof typeof differenceFilters> = {
+        Case: "case",
+        Change: "change",
+        Deletion: "deletion",
+        Hyphen: "hyphen",
+        Insertion: "insertion",
+        Location: "location",
+        Bold: "bold",
+        Color: "color",
+        "Font Type": "fontType",
+        Space: "space",
+        Size: "size",
+        Underline: "underline",
+      };
+
+      const filteredFindings = inspectionReport.findings.filter(
+        (finding) => {
+          const filterKey = typeToFilterKey[finding.type];
+          if (!filterKey) {
+            return true; // unknown types are never filtered
+          }
+          return differenceFilters[filterKey];
+        }
+      );
+
       const differences: InspectionDifference[] =
-        inspectionReport.findings.map(
+        filteredFindings.map(
           (finding) => ({
             id: finding.id,
 
@@ -243,6 +286,9 @@ export default function WorkspacePage() {
 
             sampleHeight:
               page.sample_height,
+
+            sampleImage:
+              page.sample_image,
           })
         );
 

@@ -55,11 +55,26 @@ export default function ViewerPane({
   }
  
   const selectedPageNumber = useMemo(() => {
-    if (!selectedDifference?.page && selectedDifference?.page !== 0) {
+    // Use a strict null/undefined check here instead of a truthy
+    // check — `selectedDifference.page` is a legitimate value of 0
+    // for the first page, and 0 is falsy in JS, which previously
+    // caused first-page differences to be silently ignored below.
+    if (
+      selectedDifference?.page === undefined ||
+      selectedDifference?.page === null
+    ) {
       return null;
     }
- 
-    return zeroBasedPageIndex
+
+    // The rest of the app (see pdfReportGenerator.ts: pages are
+    // matched via `(d.page ?? 0) === page.page` and labelled as
+    // `page.page + 1`) treats `difference.page` as 0-based. Default
+    // to that assumption unless the caller explicitly overrides it,
+    // since callers (e.g. InspectionResults) don't currently pass
+    // zeroBasedPageIndex at all.
+    const isZeroBased = zeroBasedPageIndex ?? true;
+
+    return isZeroBased
       ? selectedDifference.page + 1
       : selectedDifference.page;
   }, [selectedDifference, zeroBasedPageIndex]);
@@ -73,8 +88,10 @@ export default function ViewerPane({
   };
  
   const effectivePageNumber =
-    selectedPageNumber &&
-    selectedPageNumber >= 1
+    // Strict null check (not a truthy check) so page 1 — i.e. the
+    // result of a 0-based page 0 — is never mistaken for "no page
+    // selected" and dropped in favor of the manually-set page.
+    selectedPageNumber !== null && selectedPageNumber >= 1
       ? clampPage(selectedPageNumber)
       : clampPage(manualPageNumber);
  

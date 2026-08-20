@@ -23,7 +23,7 @@ import LogoutOutlinedIcon from "@mui/icons-material/LogoutOutlined";
 import BarcodeIcon from "./BarcodeIcon";
 import BrailleDotsIcon from "./BrailleDotsIcon";
 
-import OrganizationLogo from "@/assets/logos/viatris logo.png";
+import OrganizationLogo from "@/assets/logos/icon.png";
 import { clearSession } from "@/shared/utils/auth";
 
 type User = {
@@ -114,7 +114,9 @@ export default function Header() {
             component="img"
             src={OrganizationLogo}
             alt="Logo"
-            sx={{ height: 42 }}
+            sx={{ height: 42,
+               borderRadius: 4.5,
+            }}
           />
 
           <Typography

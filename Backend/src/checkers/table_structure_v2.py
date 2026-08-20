@@ -211,13 +211,23 @@ def _match_rows(master_rows, sample_rows, match_score_threshold=0.5):
     return matched, unmatched_master, unmatched_sample
 
 
-def _diff_cell_value(m_row, s_row) -> list:
+def _diff_cell_value(m_row, s_row, enabled_types: list = None) -> list:
     """
     Compares a matched label pair's value. If the cell has MULTIPLE
     sub-lines on both sides, diffs them individually by position order.
     Falls back to whole-value comparison when line counts don't match
     or when there's only one line.
+
+    enabled_types: optional list of finding types to produce (e.g.
+    ["Change", "Deletion", "Insertion", "Location"]). Finding types not
+    in the list are skipped entirely. When None, all types are produced.
     """
+    if enabled_types is None:
+        enabled_types = ["Change", "Deletion", "Insertion", "Location"]
+
+    def _type_enabled(f_type: str) -> bool:
+        return f_type in enabled_types
+
     m_lines, s_lines = m_row["value_lines"], s_row["value_lines"]
     m_bboxes, s_bboxes = m_row["value_line_bboxes"], s_row["value_line_bboxes"]
 
@@ -230,14 +240,16 @@ def _diff_cell_value(m_row, s_row) -> list:
     if len(m_lines) > 1 and len(m_lines) == len(s_lines):
         for m_text, m_bbox, s_text, s_bbox in zip(m_lines, m_bboxes, s_lines, s_bboxes):
             if m_text == s_text:
-                if abs(m_bbox[0] - s_bbox[0]) > POSITION_SHIFT_THRESHOLD or abs(m_bbox[1] - s_bbox[1]) > POSITION_SHIFT_THRESHOLD:
+                if _type_enabled("Location") and (
+                    abs(m_bbox[0] - s_bbox[0]) > POSITION_SHIFT_THRESHOLD or abs(m_bbox[1] - s_bbox[1]) > POSITION_SHIFT_THRESHOLD
+                ):
                     findings.append({
                         "page": m_row["page"], "master": m_text, "sample": s_text,
                         "master_bbox": m_bbox, "sample_bbox": s_bbox,
                         "comment": f"Location: text unchanged, but position shifted from {m_bbox} to {s_bbox}",
                         "type": "Location", "source": row_source,
                     })
-            else:
+            elif _type_enabled("Change"):
                 findings.append({
                     "page": m_row["page"], "master": m_text, "sample": s_text,
                     "master_bbox": m_bbox, "sample_bbox": s_bbox,
@@ -257,28 +269,33 @@ def _diff_cell_value(m_row, s_row) -> list:
             m_text = " ".join(m_words[i1:i2])
             s_text = " ".join(s_words[j1:j2])
             if op == "replace":
-                findings.append({
-                    "page": m_row["page"], "master": m_text, "sample": s_text,
-                    "master_bbox": m_row["value_bbox"], "sample_bbox": s_row["value_bbox"],
-                    "comment": f'Change: "{s_text}" should be "{m_text}" as in the original (row: {m_row["label"]})',
-                    "type": "Change", "source": row_source,
-                })
+                if _type_enabled("Change"):
+                    findings.append({
+                        "page": m_row["page"], "master": m_text, "sample": s_text,
+                        "master_bbox": m_row["value_bbox"], "sample_bbox": s_row["value_bbox"],
+                        "comment": f'Change: "{s_text}" should be "{m_text}" as in the original (row: {m_row["label"]})',
+                        "type": "Change", "source": row_source,
+                    })
             elif op == "delete":
-                findings.append({
-                    "page": m_row["page"], "master": m_text, "sample": "",
-                    "master_bbox": m_row["value_bbox"], "sample_bbox": None,
-                    "comment": "Missing in sample", "type": "Deletion", "source": row_source,
-                })
+                if _type_enabled("Deletion"):
+                    findings.append({
+                        "page": m_row["page"], "master": m_text, "sample": "",
+                        "master_bbox": m_row["value_bbox"], "sample_bbox": None,
+                        "comment": "Missing in sample", "type": "Deletion", "source": row_source,
+                    })
             elif op == "insert":
-                findings.append({
-                    "page": m_row["page"], "master": "", "sample": s_text,
-                    "master_bbox": None, "sample_bbox": s_row["value_bbox"],
-                    "comment": "Extra text in sample", "type": "Insertion", "source": row_source,
-                })
+                if _type_enabled("Insertion"):
+                    findings.append({
+                        "page": m_row["page"], "master": "", "sample": s_text,
+                        "master_bbox": None, "sample_bbox": s_row["value_bbox"],
+                        "comment": "Extra text in sample", "type": "Insertion", "source": row_source,
+                    })
         return findings
 
     mb, sb = m_row["value_bbox"], s_row["value_bbox"]
-    if abs(mb[0] - sb[0]) > POSITION_SHIFT_THRESHOLD or abs(mb[1] - sb[1]) > POSITION_SHIFT_THRESHOLD:
+    if _type_enabled("Location") and (
+        abs(mb[0] - sb[0]) > POSITION_SHIFT_THRESHOLD or abs(mb[1] - sb[1]) > POSITION_SHIFT_THRESHOLD
+    ):
         findings.append({
             "page": m_row["page"], "master": m_row["value"], "sample": s_row["value"],
             "master_bbox": mb, "sample_bbox": sb,
@@ -294,20 +311,32 @@ def check_table_rows_v2(
     page_number: int = 0,
     master_extra_lines: list = None,
     sample_extra_lines: list = None,
+    enabled_types: list = None,
 ) -> list:
     """
     master_extra_lines / sample_extra_lines: optional Doc Intelligence
     gap-fill lines (see di_gapfill.augment_lines_with_di), passed through
     to extract_table_rows so vector-outlined labels can still be found.
+
+    enabled_types: optional list of finding types to produce. When None,
+    all types are produced. Disabled types are skipped at every emission
+    point (value diff, label location, unmatched rows) so the table
+    checker never produces findings the user filtered out.
     """
     master_rows = extract_table_rows(master_pdf_path, page_number, extra_lines=master_extra_lines)
     sample_rows = extract_table_rows(sample_pdf_path, page_number, extra_lines=sample_extra_lines)
+
+    if enabled_types is None:
+        enabled_types = ["Change", "Deletion", "Insertion", "Location"]
+
+    def _type_enabled(f_type: str) -> bool:
+        return f_type in enabled_types
 
     matched, unmatched_master, unmatched_sample = _match_rows(master_rows, sample_rows)
     findings = []
 
     for m_row, s_row in matched:
-        findings += _diff_cell_value(m_row, s_row)
+        findings += _diff_cell_value(m_row, s_row, enabled_types=enabled_types)
 
         # Also check the LABEL's own position — separate from the value
         # check above. Matched rows were paired by label text similarity,
@@ -318,7 +347,7 @@ def check_table_rows_v2(
         # Sample (a genuine layout redesign) — the VALUE's move was
         # already caught, but the LABEL's move had no check at all before
         # this, so it silently had no finding of its own.
-        if m_row["label"] == s_row["label"]:
+        if m_row["label"] == s_row["label"] and _type_enabled("Location"):
             lmb, lsb = m_row["label_bbox"], s_row["label_bbox"]
             if abs(lmb[0] - lsb[0]) > POSITION_SHIFT_THRESHOLD or abs(lmb[1] - lsb[1]) > POSITION_SHIFT_THRESHOLD:
                 row_source = "doc_intelligence" if (
@@ -331,20 +360,22 @@ def check_table_rows_v2(
                     "type": "Location", "source": row_source,
                 })
 
-    for row in unmatched_master:
-        findings.append({
-            "page": row["page"], "master": f"{row['label']} {row['value']}", "sample": "",
-            "master_bbox": row["label_bbox"], "sample_bbox": None,
-            "comment": "Missing row in sample", "type": "Deletion",
-            "source": row.get("source", "pymupdf"),
-        })
+    if _type_enabled("Deletion"):
+        for row in unmatched_master:
+            findings.append({
+                "page": row["page"], "master": f"{row['label']} {row['value']}", "sample": "",
+                "master_bbox": row["label_bbox"], "sample_bbox": None,
+                "comment": "Missing row in sample", "type": "Deletion",
+                "source": row.get("source", "pymupdf"),
+            })
 
-    for row in unmatched_sample:
-        findings.append({
-            "page": row["page"], "master": "", "sample": f"{row['label']} {row['value']}",
-            "master_bbox": None, "sample_bbox": row["label_bbox"],
-            "comment": "Extra row in sample", "type": "Insertion",
-            "source": row.get("source", "pymupdf"),
-        })
+    if _type_enabled("Insertion"):
+        for row in unmatched_sample:
+            findings.append({
+                "page": row["page"], "master": "", "sample": f"{row['label']} {row['value']}",
+                "master_bbox": None, "sample_bbox": row["label_bbox"],
+                "comment": "Extra row in sample", "type": "Insertion",
+                "source": row.get("source", "pymupdf"),
+            })
 
     return findings

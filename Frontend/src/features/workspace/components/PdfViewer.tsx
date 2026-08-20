@@ -412,7 +412,7 @@ export default function PdfViewer({
                     variant="caption"
                     sx={{
                       fontWeight: 700,
-                      color: "#2A276E",
+                      color: "#FFFFFF",
                       display: "block",
                     }}
                   >
@@ -422,7 +422,7 @@ export default function PdfViewer({
                     variant="caption"
                     sx={{
                       display: "block",
-                      color: "#3f4650",
+                      color: "#E8E8F5",
                       mb: 0.5,
                     }}
                   >
@@ -435,14 +435,14 @@ export default function PdfViewer({
                     variant="caption"
                     sx={{
                       display: "block",
-                      color: "#50575e",
+                      color: "#D0D0E8",
                       fontWeight: 600,
                     }}
                   >
                     Original:{" "}
                     <Box
                       component="span"
-                      sx={{ fontWeight: 400 }}
+                      sx={{ fontWeight: 400, color: "#E8E8F5" }}
                     >
                       {selectedDifference?.master || "—"}
                     </Box>
@@ -452,14 +452,14 @@ export default function PdfViewer({
                     variant="caption"
                     sx={{
                       display: "block",
-                      color: "#50575e",
+                      color: "#D0D0E8",
                       fontWeight: 600,
                     }}
                   >
                     Sample:{" "}
                     <Box
                       component="span"
-                      sx={{ fontWeight: 400 }}
+                      sx={{ fontWeight: 400, color: "#E8E8F5" }}
                     >
                       {selectedDifference?.sample || "—"}
                     </Box>
@@ -471,15 +471,15 @@ export default function PdfViewer({
               slotProps={{
                 tooltip: {
                   sx: {
-                    bgcolor: "#FFFFFF",
-                    color: "#3f4650",
-                    border: "1px solid #d5d9dd",
-                    boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+                    bgcolor: "#2A276E",
+                    color: "#FFFFFF",
+                    border: "1px solid #2A276E",
+                    boxShadow: "0 4px 12px rgba(0,0,0,0.25)",
                   },
                 },
                 arrow: {
                   sx: {
-                    color: "#FFFFFF",
+                    color: "#2A276E",
                   },
                 },
               }}

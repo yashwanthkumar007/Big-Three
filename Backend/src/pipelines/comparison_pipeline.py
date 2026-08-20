@@ -68,6 +68,50 @@ ENABLE_DI_GAPFILL = False
 #           report), not as the default for routine review.
 SUPPRESS_DOMINANT_LOCATION_SHIFT = True
 
+# Maps a backend finding type to the frontend filter key used in the
+# Inspection sidebar's "Difference Filter" section. When a filter key is
+# disabled, the matching checker is skipped entirely and no findings of
+# that type are produced or reported.
+FINDING_TYPE_TO_FILTER = {
+    "Case": "case",
+    "Change": "change",
+    "Deletion": "deletion",
+    "Hyphen": "hyphen",
+    "Insertion": "insertion",
+    "Location": "location",
+    "Bold": "bold",
+    "Color": "color",
+    "Space": "space",
+    "Size": "size",
+    "Underline": "underline",
+    "Font Type": "fontType",
+}
+
+
+def _filter_enabled(filters: dict, key: str, default: bool = True) -> bool:
+    """Returns whether a filter key is enabled.
+
+    When no filters dict is provided (legacy callers), everything defaults
+    to enabled so behavior is unchanged.
+    """
+    if not filters:
+        return default
+    return filters.get(key, default)
+
+
+def _findings_for_enabled(findings: list, filters: dict) -> list:
+    """Safety net — drops any finding whose type maps to a disabled filter."""
+    if not filters:
+        return findings
+
+    def _type_enabled(f: dict) -> bool:
+        filter_key = FINDING_TYPE_TO_FILTER.get(f.get("type"))
+        if filter_key is None:
+            return True  # unknown types are never filtered
+        return _filter_enabled(filters, filter_key, default=True)
+
+    return [f for f in findings if _type_enabled(f)]
+
 
 def _table_region_bboxes(pdf_path: str, extra_lines: list = None) -> dict:
     """Returns {page_number: [(x0,y0,x1,y1), ...]} — the ACTUAL bounding
@@ -167,9 +211,16 @@ def _get_di_gap_rows(pdf_path: str, lines_df: pd.DataFrame) -> tuple:
         return lines_df, []
 
 
-def run_text_inspection(master_path: str, sample_path: str) -> dict:
+def run_text_inspection(master_path: str, sample_path: str, filters: dict = None) -> dict:
     """
     Runs the full Text Inspection pipeline on a Master/Sample PDF pair.
+
+    filters: optional dict of {"<filter key>": bool} matching the frontend
+        Difference Filter checkboxes (case, change, deletion, hyphen,
+        insertion, location, bold, color, fontType, space, size,
+        underline). Disabled checkers are SKIPPED entirely — no findings
+        of that type are produced or reported. When None (legacy callers),
+        all filters default to enabled and behavior is unchanged.
 
     Returns:
         {
@@ -180,6 +231,48 @@ def run_text_inspection(master_path: str, sample_path: str) -> dict:
     """
     try:
         logger.info(f"Starting Text Inspection: master={master_path}, sample={sample_path}")
+
+        # Enabled-filter helpers — everything below consults these so the
+        # user's Difference Filter selections are honored end-to-end.
+        def should_run(filter_key: str, default: bool = True) -> bool:
+            return _filter_enabled(filters, filter_key, default=default)
+
+        change_enabled = should_run("change")
+        deletion_enabled = should_run("deletion")
+        insertion_enabled = should_run("insertion")
+        location_enabled = should_run("location")
+        case_enabled = should_run("case")
+        hyphen_enabled = should_run("hyphen")
+        space_enabled = should_run("space")
+        bold_enabled = should_run("bold")
+        color_enabled = should_run("color")
+        font_type_enabled = should_run("fontType")
+
+        enabled_types = []
+        if change_enabled:
+            enabled_types.append("Change")
+        if deletion_enabled:
+            enabled_types.append("Deletion")
+        if insertion_enabled:
+            enabled_types.append("Insertion")
+        if location_enabled:
+            enabled_types.append("Location")
+        if case_enabled:
+            enabled_types.append("Case")
+        if hyphen_enabled:
+            enabled_types.append("Hyphen")
+        if space_enabled:
+            enabled_types.append("Space")
+        if bold_enabled:
+            enabled_types.append("Bold")
+        if color_enabled:
+            enabled_types.append("Color")
+        if font_type_enabled:
+            enabled_types.append("Font Type")
+
+        logger.info(
+            f"Enabled finding types: {', '.join(enabled_types) if enabled_types else '(none)'}"
+        )
 
         master_lines = extract_lines(master_path)
         sample_lines = extract_lines(sample_path)
@@ -207,6 +300,7 @@ def run_text_inspection(master_path: str, sample_path: str) -> dict:
             master_path, sample_path,
             master_extra_lines=master_di_extra,
             sample_extra_lines=sample_di_extra,
+            enabled_types=enabled_types,
         )
         table_location = [f for f in table_findings if f["type"] == "Location"]
         table_other = [f for f in table_findings if f["type"] != "Location"]
@@ -219,21 +313,34 @@ def run_text_inspection(master_path: str, sample_path: str) -> dict:
 
         findings = []
         findings += table_other
-        findings += check_change(matched_pairs)
-        findings += check_deletions(match_result["unmatched_master"], matched_pairs=matched_pairs)
-        findings += check_insertions(match_result["unmatched_sample"], matched_pairs=matched_pairs)
+        if change_enabled:
+            findings += check_change(matched_pairs)
+        if deletion_enabled:
+            findings += check_deletions(match_result["unmatched_master"], matched_pairs=matched_pairs)
+        if insertion_enabled:
+            findings += check_insertions(match_result["unmatched_sample"], matched_pairs=matched_pairs)
 
-        if ENABLE_FORMATTING_CHECKERS:
+        # Formatting/whitespace checkers additionally require the master
+        # ENABLE_FORMATTING_CHECKERS switch (pairing confidence gate) AND
+        # the individual filter being enabled.
+        if ENABLE_FORMATTING_CHECKERS and bold_enabled:
             findings += check_bold(matched_pairs)
+        if ENABLE_FORMATTING_CHECKERS and color_enabled:
             findings += check_color(matched_pairs)
+        if ENABLE_FORMATTING_CHECKERS and case_enabled:
             findings += check_case(matched_pairs)
+        if ENABLE_FORMATTING_CHECKERS and hyphen_enabled:
             findings += check_hyphen(matched_pairs)
+        if ENABLE_FORMATTING_CHECKERS and space_enabled:
             findings += check_space(matched_pairs)
 
         # Location findings come from both the table checker and the
         # general line matcher — group ALL of them together so shifts
         # spanning both regions still collapse sensibly.
-        general_location = check_location(matched_pairs)
+        if location_enabled:
+            general_location = check_location(matched_pairs)
+        else:
+            general_location = []
         all_location = table_location + general_location
         location_grouped = group_location_findings(all_location, suppress_dominant=SUPPRESS_DOMINANT_LOCATION_SHIFT)
         findings += location_grouped["ungrouped"]
@@ -252,6 +359,11 @@ def run_text_inspection(master_path: str, sample_path: str) -> dict:
             )
             for g in location_grouped["grouped"]:
                 logger.info(f"  Suppressed cluster: shift={g['shift']}, {g['count']} item(s)")
+
+        # Final safety net — drops ANY finding whose type maps to a
+        # disabled filter, including anything emitted by code paths above
+        # that weren't individually gated. Unknown types are never dropped.
+        findings = _findings_for_enabled(findings, filters)
 
         logger.info(
             f"Pipeline complete — {len(findings)} finding(s), "

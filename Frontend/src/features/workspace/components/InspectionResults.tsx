@@ -1,14 +1,29 @@
-import { useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import {
+  Alert,
   Box,
+  Button,
   Checkbox,
+  CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
   Divider,
   FormControl,
   IconButton,
   MenuItem,
   Paper,
   Select,
+  Snackbar,
   Table,
   TableBody,
   TableCell,
@@ -20,6 +35,7 @@ import {
   Typography,
 } from "@mui/material";
 
+import AddCommentOutlinedIcon from "@mui/icons-material/AddCommentOutlined";
 import GridViewOutlinedIcon from "@mui/icons-material/GridViewOutlined";
 import FilterAltOutlinedIcon from "@mui/icons-material/FilterAltOutlined";
 import VisibilityOffOutlinedIcon from "@mui/icons-material/VisibilityOffOutlined";
@@ -27,6 +43,9 @@ import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
 import VisibilityOffTwoToneIcon from "@mui/icons-material/VisibilityOffTwoTone";
 import ArrowBackOutlinedIcon from "@mui/icons-material/ArrowBackOutlined";
 import ArrowForwardOutlinedIcon from "@mui/icons-material/ArrowForwardOutlined";
+import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
+import ChevronRightIcon from "@mui/icons-material/ChevronRight";
+import CloseIcon from "@mui/icons-material/Close";
 import ShareIcon from "@mui/icons-material/Share";
 import ZoomInIcon from "@mui/icons-material/ZoomIn";
 import SwapHorizIcon from "@mui/icons-material/SwapHoriz";
@@ -36,7 +55,13 @@ import CompareIcon from "@mui/icons-material/Compare";
 
 import ViewerPane from "./ViewerPane";
 import type { BoundingBox } from "@/shared/api/textInspectionApi";
+import { shareInspectionReport } from "@/shared/api/textInspectionApi";
 import { truncateFileName } from "@/shared/utils/truncateFileName";
+import { useUploadStore } from "@/store/uploadStore";
+import {
+  downloadInspectionPdf,
+  generateInspectionReportPdfBlob,
+} from "@/shared/utils/pdfReportGenerator";
 
 export type DifferenceType =
   | "Change"
@@ -66,12 +91,155 @@ export type InspectionDifference = {
   sampleBox?: BoundingBox | null;
 };
 
+export type CharacterDifference = {
+  masterChar: string;
+  sampleChar: string;
+  type: "equal" | "change" | "insertion" | "deletion";
+  index: number;
+};
+
+/**
+ * Computes a character-level alignment between two strings
+ * using a dynamic-programming (Levenshtein) approach.
+ *
+ * Returns an array of aligned character pairs where each
+ * entry represents one aligned position.
+ */
+function calculateCharacterDifferences(
+  master: string,
+  sample: string
+): CharacterDifference[] {
+  const m = master.length;
+  const n = sample.length;
+
+  // DP table for edit distance
+  const dp: number[][] = Array.from(
+    { length: m + 1 },
+    () => Array<number>(n + 1).fill(0)
+  );
+
+  for (let i = 0; i <= m; i++) {
+    dp[i][0] = i;
+  }
+
+  for (let j = 0; j <= n; j++) {
+    dp[0][j] = j;
+  }
+
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      const cost = master[i - 1] === sample[j - 1] ? 0 : 1;
+
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1, // deletion
+        dp[i][j - 1] + 1, // insertion
+        dp[i - 1][j - 1] + cost // substitution
+      );
+    }
+  }
+
+  // Backtrack to build the alignment.
+  //
+  // IMPORTANT: insertion and deletion MUST be checked BEFORE substitution
+  // (change). When several moves are equally optimal (e.g. when no characters
+  // match), checking substitution first would consume the tail of BOTH strings
+  // simultaneously, which right-aligns the shorter string to the end of the
+  // strip. By preferring insertion/deletion first, the extra characters of the
+  // longer string are drained from the back, keeping the alignment anchored to
+  // the correct left-to-right logical position.
+  const alignment: CharacterDifference[] = [];
+  let i = m;
+  let j = n;
+
+  while (i > 0 || j > 0) {
+    if (
+      i > 0 &&
+      j > 0 &&
+      dp[i][j] === dp[i - 1][j - 1] &&
+      master[i - 1] === sample[j - 1]
+    ) {
+      // Equal characters
+      alignment.unshift({
+        masterChar: master[i - 1],
+        sampleChar: sample[j - 1],
+        type: "equal",
+        index: 0,
+      });
+      i--;
+      j--;
+    } else if (
+      j > 0 &&
+      dp[i][j] === dp[i][j - 1] + 1
+    ) {
+      // Insertion: sample char has no master counterpart
+      alignment.unshift({
+        masterChar: "",
+        sampleChar: sample[j - 1],
+        type: "insertion",
+        index: 0,
+      });
+      j--;
+    } else if (
+      i > 0 &&
+      dp[i][j] === dp[i - 1][j] + 1
+    ) {
+      // Deletion: master char has no sample counterpart
+      alignment.unshift({
+        masterChar: master[i - 1],
+        sampleChar: "",
+        type: "deletion",
+        index: 0,
+      });
+      i--;
+    } else if (
+      i > 0 &&
+      j > 0 &&
+      dp[i][j] === dp[i - 1][j - 1] + 1
+    ) {
+      // Changed character
+      alignment.unshift({
+        masterChar: master[i - 1],
+        sampleChar: sample[j - 1],
+        type: "change",
+        index: 0,
+      });
+      i--;
+      j--;
+    } else if (j > 0) {
+      // Fallback: sample char is extra at the current position
+      alignment.unshift({
+        masterChar: "",
+        sampleChar: sample[j - 1],
+        type: "insertion",
+        index: 0,
+      });
+      j--;
+    } else {
+      // Fallback: master char is extra at the current position
+      alignment.unshift({
+        masterChar: master[i - 1],
+        sampleChar: "",
+        type: "deletion",
+        index: 0,
+      });
+      i--;
+    }
+  }
+
+  // Assign final indices
+  return alignment.map((item, idx) => ({
+    ...item,
+    index: idx,
+  }));
+}
+
 export type PageDimensions = {
   page: number;
   masterWidth?: number;
   masterHeight?: number;
   sampleWidth?: number;
   sampleHeight?: number;
+  sampleImage?: string;
 };
 
 export type InspectionResult = {
@@ -109,6 +277,12 @@ export default function InspectionResults({
     null
   );
 
+  const [selectedCharacterIndex, setSelectedCharacterIndex] = useState(0);
+  const [lastDifferenceId, setLastDifferenceId] = useState<number | null>(null);
+
+  const characterStripRef = useRef<HTMLDivElement | null>(null);
+  const selectedCharacterRef = useRef<HTMLDivElement | null>(null);
+
   const effectiveSelectedId =
     selectedDifference?.id ?? internalSelectedId;
 
@@ -125,6 +299,380 @@ export default function InspectionResults({
   };
 
   const differenceCount = result.totalDifferences;
+
+  /* ------------------------------------------------------------------ */
+  /* Comment / status management                                        */
+  /* ------------------------------------------------------------------ */
+
+  const COMMENT_OPTIONS = [
+    "Reviewed",
+    "Approved",
+    "To be verified",
+    "None",
+    "Comment1",
+    "Comment2",
+    "Comment3",
+  ];
+
+  /**
+   * Per-difference comment/status selection from the shared store.
+   * Key = difference id, value = selected option (e.g. "Reviewed").
+   */
+  const commentSelections = useUploadStore(
+    (state) => state.commentSelections
+  );
+  const setCommentSelections = useUploadStore(
+    (state) => state.setCommentSelections
+  );
+  const levelSelections = useUploadStore(
+    (state) => state.levelSelections
+  );
+  const setLevelSelections = useUploadStore(
+    (state) => state.setLevelSelections
+  );
+  const differenceFilters = useUploadStore(
+    (state) => state.differenceFilters
+  );
+
+  /**
+   * Custom comments entered by the user on screen.
+   * These appear in the dropdown as "Comment1", "Comment2", "Comment3".
+   */
+  const customComments = useUploadStore((state) => state.customComments);
+  const setCustomComments = useUploadStore((state) => state.setCustomComments);
+
+  /** Dialog state for adding a new comment. */
+  const [addCommentOpen, setAddCommentOpen] = useState(false);
+  const [newCommentText, setNewCommentText] = useState("");
+
+  const getCommentValue = (differenceId: number) =>
+    commentSelections[differenceId] ?? "None";
+
+  const handleCommentChange = (differenceId: number, value: string) => {
+    setCommentSelections({
+      ...commentSelections,
+      [differenceId]: value,
+    });
+  };
+
+  const getLevelValue = (differenceId: number) =>
+    levelSelections[differenceId] ?? "";
+
+  const handleLevelChange = (differenceId: number, value: string) => {
+    setLevelSelections({
+      ...levelSelections,
+      [differenceId]: value,
+    });
+  };
+
+  /** Difference id currently being edited via double-click. */
+  const [editingCommentId, setEditingCommentId] = useState<number | null>(null);
+  const [editingCommentText, setEditingCommentText] = useState("");
+
+  const handleStartEdit = (difference: InspectionDifference) => {
+    const currentValue = getCommentValue(difference.id);
+    // Only allow editing when a Comment1/2/3 is selected
+    if (
+      currentValue === "Comment1" ||
+      currentValue === "Comment2" ||
+      currentValue === "Comment3"
+    ) {
+      setEditingCommentId(difference.id);
+      setEditingCommentText(currentValue);
+    }
+  };
+
+  const handleSaveEdit = (differenceId: number) => {
+    const trimmed = editingCommentText.trim();
+    if (trimmed) {
+      setCommentSelections({
+        ...commentSelections,
+        [differenceId]: trimmed,
+      });
+    }
+    setEditingCommentId(null);
+    setEditingCommentText("");
+  };
+
+  const handleAddComment = () => {
+    const trimmed = newCommentText.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    const next = [...customComments, trimmed];
+    // Keep only the latest 3 custom comments
+    setCustomComments(next.length > 3 ? next.slice(next.length - 3) : next);
+
+    setNewCommentText("");
+    setAddCommentOpen(false);
+  };
+
+  /* ------------------------------------------------------------------ */
+  /* Share report modal                                                 */
+  /* ------------------------------------------------------------------ */
+
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareEmail, setShareEmail] = useState("");
+  const [shareEmailError, setShareEmailError] = useState<string | null>(null);
+  const [shareLoading, setShareLoading] = useState(false);
+  const [shareSuccess, setShareSuccess] = useState(false);
+  const [shareError, setShareError] = useState<string | null>(null);
+
+  const EMAIL_REGEX = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
+  const validateEmail = (email: string): string | null => {
+    if (!email.trim()) {
+      return "Email address is required.";
+    }
+    if (!EMAIL_REGEX.test(email.trim())) {
+      return "Please enter a valid email address.";
+    }
+    return null;
+  };
+
+  const handleShareOpen = () => {
+    console.log("[SHARE REPORT] Share dialog opened");
+    setShareEmail("");
+    setShareEmailError(null);
+    setShareError(null);
+    setShareSuccess(false);
+    setShareOpen(true);
+  };
+
+  const handleShareClose = () => {
+    if (shareLoading) {
+      return;
+    }
+    setShareOpen(false);
+    setShareEmail("");
+    setShareEmailError(null);
+    setShareError(null);
+    setShareSuccess(false);
+  };
+
+  const handleShareEmailChange = (value: string) => {
+    setShareEmail(value);
+    if (shareEmailError) {
+      setShareEmailError(null);
+    }
+  };
+
+  const handleShareSubmit = async () => {
+    const error = validateEmail(shareEmail);
+    if (error) {
+      setShareEmailError(error);
+      return;
+    }
+
+    setShareLoading(true);
+    setShareError(null);
+    setShareSuccess(false);
+
+    try {
+      console.log("[SHARE REPORT] Recipient email:", shareEmail.trim());
+      console.log("[SHARE REPORT] Generating PDF");
+
+      const pdfBlob = await generateInspectionReportPdfBlob({
+        sessionId: result.inspectionId,
+        result,
+        commentSelections,
+        levelSelections,
+        differenceFilters,
+      });
+
+      console.log("[SHARE REPORT] PDF generated");
+      console.log("[SHARE REPORT] PDF size:", pdfBlob.size, "bytes");
+
+      await shareInspectionReport({
+        recipientEmail: shareEmail.trim(),
+        sessionId: result.inspectionId,
+        masterFileName: result.masterFileName,
+        sampleFileName: result.sampleFileName,
+        reportPdf: pdfBlob,
+      });
+
+      setShareSuccess(true);
+      setShareEmail("");
+      setShareOpen(false);
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Failed to share the report.";
+      setShareError(message);
+    } finally {
+      setShareLoading(false);
+    }
+  };
+
+  /* ------------------------------------------------------------------ */
+  /* Difference List window                                             */
+  /* ------------------------------------------------------------------ */
+
+  const differenceListWindowRef = useRef<Window | null>(null);
+
+  const handleOpenDifferenceList = () => {
+    console.log("[DIFFERENCE LIST] Button clicked");
+    console.log("[DIFFERENCE LIST] Current differences:", result.differences.length);
+    console.log("[DIFFERENCE LIST] Current Level values:", levelSelections);
+    console.log("[DIFFERENCE LIST] Current Comment values:", commentSelections);
+
+    // If a window is already open, focus it instead of opening a duplicate
+    if (differenceListWindowRef.current && !differenceListWindowRef.current.closed) {
+      console.log("[DIFFERENCE LIST] Existing window status: open");
+      differenceListWindowRef.current.focus();
+      return;
+    }
+
+    console.log("[DIFFERENCE LIST] Existing window status: closed or none");
+    console.log("[DIFFERENCE LIST] Opening window");
+
+    const url = `${window.location.origin}/inspection/differences`;
+    const newWindow = window.open(url, "DifferenceList", "width=1200,height=800");
+
+    if (newWindow) {
+      differenceListWindowRef.current = newWindow;
+      console.log("[DIFFERENCE LIST] Window opened successfully");
+    } else {
+      console.log("[DIFFERENCE LIST] Window blocked by popup blocker");
+    }
+  };
+
+  /* ------------------------------------------------------------------ */
+  /* Character-level difference alignment                               */
+  /* ------------------------------------------------------------------ */
+
+  const masterText = selectedDifferenceData?.master ?? "";
+  const sampleText = selectedDifferenceData?.sample ?? "";
+
+  const characterDifferences = useMemo(
+    () => calculateCharacterDifferences(masterText, sampleText),
+    [masterText, sampleText]
+  );
+
+  const selectedCharacter =
+    characterDifferences[selectedCharacterIndex] ?? null;
+
+  /* ------------------------------------------------------------------ */
+  /* Reset character selection when the selected difference changes     */
+  /* ------------------------------------------------------------------ */
+
+  const currentDifferenceId = selectedDifferenceData?.id ?? null;
+
+  if (currentDifferenceId !== lastDifferenceId) {
+    setLastDifferenceId(currentDifferenceId);
+
+    if (currentDifferenceId !== null) {
+      // Reset to the first non-equal character if any, otherwise index 0
+      const firstDiffIndex = characterDifferences.findIndex(
+        (item: CharacterDifference) => item.type !== "equal"
+      );
+
+      setSelectedCharacterIndex(
+        firstDiffIndex >= 0 ? firstDiffIndex : 0
+      );
+    } else {
+      setSelectedCharacterIndex(0);
+    }
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Auto-scroll the character strip to the selected character          */
+  /* ------------------------------------------------------------------ */
+
+  useEffect(() => {
+    if (!selectedCharacterRef.current) {
+      return;
+    }
+
+    selectedCharacterRef.current.scrollIntoView({
+      behavior: "smooth",
+      block: "nearest",
+      inline: "center",
+    });
+  }, [selectedCharacterIndex]);
+
+  /* ------------------------------------------------------------------ */
+  /* Difference navigation (Previous / Next)                            */
+  /* ------------------------------------------------------------------ */
+
+  const currentDifferenceIndex = selectedDifferenceData
+    ? result.differences.findIndex(
+        (d) => d.id === selectedDifferenceData.id
+      )
+    : -1;
+
+  const handlePreviousDifference = () => {
+    if (currentDifferenceIndex <= 0) {
+      return;
+    }
+
+    const prev = result.differences[currentDifferenceIndex - 1];
+    handleSelect(prev);
+  };
+
+  const handleNextDifference = () => {
+    if (
+      currentDifferenceIndex < 0 ||
+      currentDifferenceIndex >= result.differences.length - 1
+    ) {
+      return;
+    }
+
+    const next = result.differences[currentDifferenceIndex + 1];
+    handleSelect(next);
+  };
+
+  /* ------------------------------------------------------------------ */
+  /* Keyboard navigation (ArrowLeft / ArrowRight)                       */
+  /* ------------------------------------------------------------------ */
+
+  const handleKeyDown = useCallback(
+    (event: KeyboardEvent) => {
+      if (!selectedDifferenceData) {
+        return;
+      }
+
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        handlePreviousDifference();
+      } else if (event.key === "ArrowRight") {
+        event.preventDefault();
+        handleNextDifference();
+      }
+    },
+    [selectedDifferenceData, currentDifferenceIndex, result.differences]
+  );
+
+  useEffect(() => {
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [handleKeyDown]);
+
+  /* ------------------------------------------------------------------ */
+  /* Debug logs                                                         */
+  /* ------------------------------------------------------------------ */
+
+  console.log("[CharacterDiff] Master:", masterText);
+  console.log("[CharacterDiff] Sample:", sampleText);
+
+  console.log("[CharacterDiff] Alignment (character at each index):");
+  console.log(
+    "  Master:",
+    characterDifferences.map((item) => item.masterChar || " ").join(" | ")
+  );
+  console.log(
+    "  Sample:",
+    characterDifferences.map((item) => item.sampleChar || " ").join(" | ")
+  );
+  console.log(
+    "  Type:  ",
+    characterDifferences.map((item) => item.type).join(" | ")
+  );
+  console.log("[CharacterDiff] Alignment (per-index objects):", characterDifferences);
+  console.log("[CharacterDiff] Selected index:", selectedCharacterIndex);
+  console.log("[CharacterDiff] Selected character:", selectedCharacter);
 
   return (
     <Box
@@ -245,6 +793,7 @@ export default function InspectionResults({
         <Tooltip title="Share" arrow>
           <IconButton
             size="small"
+            onClick={handleShareOpen}
             sx={{
               bgcolor: "#2A276E",
               color: "#ffffff",
@@ -309,6 +858,15 @@ export default function InspectionResults({
         <Tooltip title="Download the PDF report" arrow>
           <IconButton
             size="small"
+            onClick={() => {
+              void downloadInspectionPdf({
+                sessionId: result.inspectionId,
+                result,
+                commentSelections,
+                levelSelections,
+                differenceFilters,
+              });
+            }}
             sx={{
               bgcolor: "#2A276E",
               color: "#ffffff",
@@ -325,6 +883,7 @@ export default function InspectionResults({
         <Tooltip title="Open difference list" arrow>
           <IconButton
             size="small"
+            onClick={handleOpenDifferenceList}
             sx={{
               bgcolor: "#2A276E",
               color: "#ffffff",
@@ -486,7 +1045,34 @@ export default function InspectionResults({
                   borderBottom: "1px solid #cdd2d7",
                 }}
               >
-                Comment
+                <Box
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 0.5,
+                  }}
+                >
+                  Comment
+                  <Tooltip title="Add comment" arrow>
+                    <IconButton
+                      size="small"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setAddCommentOpen(true);
+                      }}
+                      sx={{
+                        p: 0.25,
+                        color: "#2A276E",
+                        "&:hover": {
+                          bgcolor: "rgba(42, 39, 110, 0.08)",
+                        },
+                      }}
+                    >
+                      <AddCommentOutlinedIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                </Box>
               </TableCell>
             </TableRow>
           </TableHead>
@@ -563,39 +1149,105 @@ export default function InspectionResults({
                   <TableCell>
                     <FormControl size="small" fullWidth>
                       <Select
-                        value={difference.level ?? ""}
+                        value={getLevelValue(difference.id)}
                         displayEmpty
                         sx={{
                           height: 30,
                           fontSize: 13,
+                        }}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                        }}
+                        onChange={(event) => {
+                          handleLevelChange(
+                            difference.id,
+                            event.target.value as string
+                          );
                         }}
                       >
                         <MenuItem value="">None</MenuItem>
                         <MenuItem value="Low">Low</MenuItem>
                         <MenuItem value="Medium">Medium</MenuItem>
                         <MenuItem value="High">High</MenuItem>
+                        <MenuItem value="Critical">Critical</MenuItem>
                       </Select>
                     </FormControl>
                   </TableCell>
 
                   <TableCell>
-                    <TextField
-                      size="small"
-                      fullWidth
-                      value={difference.comment ?? ""}
-                      placeholder="Comment..."
-                      slotProps={{
-                        htmlInput: {
-                          readOnly: true,
-                        },
-                      }}
-                      sx={{
-                        "& .MuiInputBase-root": {
-                          height: 30,
-                          fontSize: 13,
-                        },
-                      }}
-                    />
+                    {editingCommentId === difference.id ? (
+                      <TextField
+                        size="small"
+                        fullWidth
+                        autoFocus
+                        value={editingCommentText}
+                        onChange={(event) =>
+                          setEditingCommentText(event.target.value)
+                        }
+                        onBlur={() => handleSaveEdit(difference.id)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            handleSaveEdit(difference.id);
+                          } else if (event.key === "Escape") {
+                            setEditingCommentId(null);
+                            setEditingCommentText("");
+                          }
+                        }}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                        }}
+                        sx={{
+                          "& .MuiInputBase-root": {
+                            height: 30,
+                            fontSize: 13,
+                          },
+                        }}
+                      />
+                    ) : (
+                      <FormControl size="small" fullWidth>
+                        <Select
+                          value={getCommentValue(difference.id)}
+                          displayEmpty
+                          sx={{
+                            height: 30,
+                            fontSize: 13,
+                          }}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                          }}
+                          onDoubleClick={(event) => {
+                            event.stopPropagation();
+                            handleStartEdit(difference);
+                          }}
+                          onChange={(event) => {
+                            handleCommentChange(
+                              difference.id,
+                              event.target.value as string
+                            );
+                          }}
+                        >
+                          {COMMENT_OPTIONS.map((option) => (
+                            <MenuItem key={option} value={option}>
+                              {option}
+                            </MenuItem>
+                          ))}
+
+                          {customComments.length > 0 && (
+                            <Divider sx={{ my: 0.5 }} />
+                          )}
+
+                          {customComments.map((comment, index) => (
+                            <MenuItem
+                              key={`${comment}-${index}`}
+                              value={comment}
+                            >
+                              {comment}
+                            </MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    )}
                   </TableCell>
                 </TableRow>
               );
@@ -786,6 +1438,515 @@ export default function InspectionResults({
           />
         </Box>
       </Box>
+
+      {/* =========================================================
+          CHARACTER DIFFERENCE PANEL (BOTTOM)
+         ========================================================= */}
+
+      {selectedDifferenceData && (
+        <Box
+          sx={{
+            borderTop: "1px solid #d5d9dd",
+            bgcolor: "#f8f9fa",
+            flexShrink: 0,
+            display: "flex",
+            alignItems: "center",
+            px: 1,
+            py: 1,
+            gap: 1,
+          }}
+        >
+          {/* Previous Difference */}
+          <IconButton
+            size="small"
+            disabled={currentDifferenceIndex <= 0}
+            onClick={handlePreviousDifference}
+            sx={{
+              bgcolor: "#2A276E",
+              color: "#ffffff",
+              "&:hover": {
+                bgcolor: "#1f1d57",
+              },
+              "&.Mui-disabled": {
+                bgcolor: "#d9d9d9",
+                color: "#8a8a8a",
+              },
+            }}
+          >
+            <ChevronLeftIcon fontSize="small" />
+          </IconButton>
+
+          <Box
+            sx={{
+              flex: 1,
+              minWidth: 0,
+              display: "flex",
+              flexDirection: "column",
+              gap: 0.5,
+            }}
+          >
+            <Box
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                gap: 1,
+                px: 0.5,
+              }}
+            >
+              <Typography
+                variant="caption"
+                sx={{
+                  fontWeight: 700,
+                  color: "#2A276E",
+                }}
+              >
+                Character Difference
+              </Typography>
+
+              <Typography
+                variant="caption"
+                sx={{
+                  fontWeight: 600,
+                  color: "#50575e",
+                }}
+              >
+                Difference {selectedDifferenceData.id} / {result.differences.length}
+              </Typography>
+            </Box>
+
+            <Box
+              ref={characterStripRef}
+              sx={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 0.5,
+                overflowX: "auto",
+                overflowY: "hidden",
+                pb: 0.5,
+              }}
+            >
+              {/* Master Row */}
+              <Box
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 0.25,
+                }}
+              >
+                <Typography
+                  variant="caption"
+                  sx={{
+                    fontWeight: 600,
+                    color: "#50575e",
+                    minWidth: 48,
+                    flexShrink: 0,
+                  }}
+                >
+                  Master
+                </Typography>
+
+                {characterDifferences.map((item) => {
+                  const isSelected = item.index === selectedCharacterIndex;
+                  const isEmpty = item.masterChar === "";
+
+                  return (
+                    <Box
+                      key={`m-${item.index}`}
+                      ref={isSelected ? selectedCharacterRef : null}
+                      onClick={() => setSelectedCharacterIndex(item.index)}
+                      sx={{
+  minWidth: 22,
+  height: 24,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  border: "1px solid #cdd2d7",
+  borderRadius: 0.5,
+  fontSize: 12,
+  fontFamily: "monospace",
+  cursor: "pointer",
+  userSelect: "none",
+  flexShrink: 0,
+  position: "relative",
+  zIndex: isSelected ? 2 : 1,
+
+  bgcolor:
+    item.type === "change" || item.type === "deletion"
+      ? "#fde8e8"
+      : "#ffffff",
+
+  borderColor: isSelected
+    ? "#2A276E"
+    : item.type === "change" || item.type === "deletion"
+    ? "#e57373"
+    : "#cdd2d7",
+
+  boxShadow: isSelected
+    ? "0 0 0 2px #2A276E, 0 0 0 4px rgba(42, 39, 110, 0.25)"
+    : item.type === "change" || item.type === "deletion"
+    ? "0 0 0 2px #e53935"
+    : "none",
+
+  color: "#2f353c",
+
+  transition:
+    "box-shadow 0.15s ease, border-color 0.15s ease, transform 0.15s ease",
+}}
+                    >
+                      {isEmpty ? "" : item.masterChar === " " ? "·" : item.masterChar}
+                    </Box>
+                  );
+                })}
+
+                {/* Filler boxes to fill remaining width */}
+                {Array.from({ length: 8 }).map((_, i) => (
+                  <Box
+                    key={`mf-${i}`}
+                    sx={{
+                      flex: 1,
+                      minWidth: 22,
+                      height: 24,
+                      border: "1px dashed #e0e0e0",
+                      borderRadius: 0.5,
+                      flexShrink: 0,
+                    }}
+                  />
+                ))}
+              </Box>
+
+              {/* Sample Row */}
+              <Box
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 0.25,
+                }}
+              >
+                <Typography
+                  variant="caption"
+                  sx={{
+                    fontWeight: 600,
+                    color: "#50575e",
+                    minWidth: 48,
+                    flexShrink: 0,
+                  }}
+                >
+                  Sample
+                </Typography>
+
+                {characterDifferences.map((item) => {
+                  const isSelected = item.index === selectedCharacterIndex;
+                  const isEmpty = item.sampleChar === "";
+
+                  return (
+                    <Box
+                      key={`s-${item.index}`}
+                      onClick={() => setSelectedCharacterIndex(item.index)}
+                      sx={{
+  minWidth: 22,
+  height: 24,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  border: "1px solid #cdd2d7",
+  borderRadius: 0.5,
+  fontSize: 12,
+  fontFamily: "monospace",
+  cursor: "pointer",
+  userSelect: "none",
+  flexShrink: 0,
+  position: "relative",
+  zIndex: isSelected ? 2 : 1,
+
+  bgcolor:
+    item.type === "change" || item.type === "insertion"
+      ? "#fde8e8"
+      : "#ffffff",
+
+  borderColor: isSelected
+    ? "#2A276E"
+    : item.type === "change" || item.type === "insertion"
+    ? "#e57373"
+    : "#cdd2d7",
+
+  boxShadow: isSelected
+    ? "0 0 0 2px #2A276E, 0 0 0 4px rgba(42, 39, 110, 0.25)"
+    : item.type === "change" || item.type === "insertion"
+    ? "0 0 0 2px #e53935"
+    : "none",
+
+  color: "#2f353c",
+
+  transition:
+    "box-shadow 0.15s ease, border-color 0.15s ease, transform 0.15s ease",
+}}
+                    >
+                      {isEmpty ? "" : item.sampleChar === " " ? "·" : item.sampleChar}
+                    </Box>
+                  );
+                })}
+
+                {/* Filler boxes to fill remaining width */}
+                {Array.from({ length: 8 }).map((_, i) => (
+                  <Box
+                    key={`sf-${i}`}
+                    sx={{
+                      flex: 1,
+                      minWidth: 22,
+                      height: 24,
+                      border: "1px dashed #e0e0e0",
+                      borderRadius: 0.5,
+                      flexShrink: 0,
+                    }}
+                  />
+                ))}
+              </Box>
+            </Box>
+          </Box>
+
+          {/* Next Difference */}
+          <IconButton
+            size="small"
+            disabled={
+              currentDifferenceIndex < 0 ||
+              currentDifferenceIndex >= result.differences.length - 1
+            }
+            onClick={handleNextDifference}
+            sx={{
+              bgcolor: "#2A276E",
+              color: "#ffffff",
+              "&:hover": {
+                bgcolor: "#1f1d57",
+              },
+              "&.Mui-disabled": {
+                bgcolor: "#d9d9d9",
+                color: "#8a8a8a",
+              },
+            }}
+          >
+            <ChevronRightIcon fontSize="small" />
+          </IconButton>
+        </Box>
+      )}
+
+      {/* =========================================================
+          SHARE REPORT DIALOG
+         ========================================================= */}
+
+      <Dialog
+        open={shareOpen}
+        onClose={handleShareClose}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            fontWeight: 700,
+            color: "#2A276E",
+          }}
+        >
+          File share
+          <IconButton
+            size="small"
+            onClick={handleShareClose}
+            disabled={shareLoading}
+            sx={{
+              color: "#50575e",
+              "&:hover": {
+                bgcolor: "rgba(0, 0, 0, 0.06)",
+              },
+            }}
+          >
+            <CloseIcon fontSize="small" />
+          </IconButton>
+        </DialogTitle>
+
+        <DialogContent>
+          <DialogContentText
+            sx={{
+              mb: 2,
+              color: "#50575e",
+            }}
+          >
+            Please enter an email address of the user you would like to share
+            this inspection report with.
+          </DialogContentText>
+
+          <TextField
+            autoFocus
+            fullWidth
+            size="small"
+            label="Email address *"
+            placeholder="Email address"
+            type="email"
+            value={shareEmail}
+            onChange={(event) => handleShareEmailChange(event.target.value)}
+            error={Boolean(shareEmailError)}
+            helperText={shareEmailError ?? ""}
+            disabled={shareLoading}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !shareLoading) {
+                event.preventDefault();
+                void handleShareSubmit();
+              }
+            }}
+          />
+
+          {shareError && (
+            <Alert severity="error" sx={{ mt: 2 }}>
+              {shareError}
+            </Alert>
+          )}
+        </DialogContent>
+
+        <DialogActions
+          sx={{
+            px: 3,
+            pb: 2,
+          }}
+        >
+          <Button
+            onClick={handleShareClose}
+            disabled={shareLoading}
+            sx={{
+              textTransform: "none",
+              color: "#50575e",
+            }}
+          >
+            Cancel
+          </Button>
+
+          <Button
+            variant="contained"
+            onClick={() => void handleShareSubmit()}
+            disabled={shareLoading || !shareEmail.trim()}
+            startIcon={
+              shareLoading ? (
+                <CircularProgress size={16} color="inherit" />
+              ) : undefined
+            }
+            sx={{
+              textTransform: "none",
+              bgcolor: "#2A276E",
+              "&:hover": {
+                bgcolor: "#1f1d57",
+              },
+              "&.Mui-disabled": {
+                bgcolor: "#d9d9d9",
+                color: "#8a8a8a",
+              },
+            }}
+          >
+            {shareLoading ? "Sharing..." : "Share"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* =========================================================
+          SUCCESS SNACKBAR
+         ========================================================= */}
+
+      <Snackbar
+        open={shareSuccess}
+        autoHideDuration={4000}
+        onClose={() => setShareSuccess(false)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      >
+        <Alert
+          onClose={() => setShareSuccess(false)}
+          severity="success"
+          variant="filled"
+          sx={{ width: "100%" }}
+        >
+          Inspection report shared successfully.
+        </Alert>
+      </Snackbar>
+
+      {/* =========================================================
+          ADD COMMENT DIALOG
+         ========================================================= */}
+
+      <Dialog
+        open={addCommentOpen}
+        onClose={() => setAddCommentOpen(false)}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle
+          sx={{
+            fontWeight: 700,
+            color: "#2A276E",
+          }}
+        >
+          Add Comment
+        </DialogTitle>
+
+        <DialogContent>
+          <DialogContentText
+            sx={{
+              mb: 2,
+              color: "#50575e",
+            }}
+          >
+            Enter a comment. It will appear in the Comment dropdown for all
+            differences.
+          </DialogContentText>
+
+          <TextField
+            autoFocus
+            fullWidth
+            size="small"
+            label="Comment"
+            placeholder="Type your comment..."
+            value={newCommentText}
+            onChange={(event) => setNewCommentText(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                handleAddComment();
+              }
+            }}
+          />
+        </DialogContent>
+
+        <DialogActions
+          sx={{
+            px: 3,
+            pb: 2,
+          }}
+        >
+          <Button
+            onClick={() => {
+              setNewCommentText("");
+              setAddCommentOpen(false);
+            }}
+            sx={{
+              textTransform: "none",
+              color: "#50575e",
+            }}
+          >
+            Cancel
+          </Button>
+
+          <Button
+            variant="contained"
+            onClick={handleAddComment}
+            disabled={!newCommentText.trim()}
+            sx={{
+              textTransform: "none",
+              bgcolor: "#2A276E",
+              "&:hover": {
+                bgcolor: "#1f1d57",
+              },
+            }}
+          >
+            Add
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

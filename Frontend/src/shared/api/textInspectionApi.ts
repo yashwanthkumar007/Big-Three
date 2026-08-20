@@ -17,6 +17,8 @@ export type TextInspectionUploadProgress = {
 export type TextInspectionApiOptions = {
   onStatus?: (status: TextInspectionUploadProgress) => void;
   sessionId?: string;
+  /** Difference Filter payload forwarded to the backend `/api/inspect` call. */
+  differenceFilters?: Record<string, boolean>;
 };
 
 /* -------------------------------------------------------------------------- */
@@ -72,6 +74,69 @@ const generateSessionId = () => {
   return `text-inspection-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 };
 
+export type ShareInspectionReportParams = {
+  recipientEmail: string;
+  sessionId: string;
+  masterFileName: string;
+  sampleFileName: string;
+  reportPdf: Blob;
+};
+
+export type ShareInspectionReportResult = {
+  success: boolean;
+  message?: string;
+};
+
+/**
+ * Shares the inspection report PDF by sending it to the backend,
+ * which emails it to the recipient as an attachment.
+ */
+export async function shareInspectionReport({
+  recipientEmail,
+  sessionId,
+  masterFileName,
+  sampleFileName,
+  reportPdf,
+}: ShareInspectionReportParams): Promise<ShareInspectionReportResult> {
+  console.log("[SHARE REPORT] Sending email request");
+
+  const formData = new FormData();
+  formData.append("recipientEmail", recipientEmail);
+  formData.append("sessionId", sessionId);
+  formData.append("masterFileName", masterFileName);
+  formData.append("sampleFileName", sampleFileName);
+  formData.append(
+    "reportPdf",
+    reportPdf,
+    `inspection-report-${sessionId}.pdf`
+  );
+
+  try {
+    const response = await axios.post(
+      `${API_BASE_URL}/api/inspection/share`,
+      formData
+      // NOTE: Do NOT set Content-Type manually — Axios/browser
+      // handles the multipart boundary automatically.
+    );
+
+    console.log("[SHARE REPORT] Email sent successfully");
+    return {
+      success: true,
+      message: response.data?.message ?? "Inspection report shared successfully.",
+    };
+  } catch (error: unknown) {
+    const axiosError = error as {
+      response?: { data?: { error?: string } };
+    };
+    const message =
+      axiosError?.response?.data?.error ??
+      "Failed to share the inspection report. Please try again.";
+
+    console.error("[SHARE REPORT] Email request failed:", error);
+    throw new Error(message, { cause: error });
+  }
+}
+
 export async function startTextInspection(
   masterFile: File,
   sampleFile: File,
@@ -107,6 +172,9 @@ export async function startTextInspection(
 
     const response = await axios.post(`${API_BASE_URL}/api/inspect`, {
       session_id: sessionId,
+      ...(options.differenceFilters
+        ? { filters: options.differenceFilters }
+        : {}),
     });
 
     setStatus("Preparing results...", 100);

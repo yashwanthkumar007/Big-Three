@@ -19,12 +19,15 @@ Then open http://127.0.0.1:5000 in your browser.
 """
 
 import os
+import re
 import sys
 from flask import Flask, request, jsonify, send_from_directory, render_template_string
 
 sys.path.append(os.path.dirname(__file__))
 from src.pipelines.comparison_pipeline import run_text_inspection
 from src.pipelines.report_builder import build_report, render_page
+from src.email_service import send_inspection_report_email
+from src.logger import logger
 
 app = Flask(__name__)
 
@@ -72,10 +75,18 @@ def api_upload():
 
 @app.route("/api/inspect", methods=["POST"])
 def api_inspect():
-    data = request.get_json()
+    data = request.get_json() or {}
     session_id = data.get("session_id")
     if not session_id:
         return jsonify({"error": "session_id required"}), 400
+
+    # Optional Difference Filter payload — {"<filter key>": bool} matching
+    # the frontend Inspection sidebar's Difference Filter checkboxes
+    # (case, change, deletion, hyphen, insertion, location, bold, color,
+    # fontType, space, size, underline). Disabled checkers are skipped
+    # entirely by the backend pipeline so no filtered-out findings are
+    # produced or reported. When absent, every type is checked.
+    filters = data.get("filters")
 
     session_dir = os.path.join(UPLOAD_ROOT, session_id)
     master_path = os.path.join(session_dir, "master.pdf")
@@ -85,7 +96,7 @@ def api_inspect():
         return jsonify({"error": "Both Master and Sample must be uploaded first"}), 400
 
     try:
-        result = run_text_inspection(master_path, sample_path)
+        result = run_text_inspection(master_path, sample_path, filters=filters)
     except Exception as e:
         return jsonify({"error": f"Inspection failed: {str(e)}"}), 500
 
@@ -104,6 +115,72 @@ def api_inspect():
 
     report["match_stats"] = result["match_stats"]
     return jsonify(report)
+
+
+@app.route("/api/inspection/share", methods=["POST"])
+def api_share_inspection():
+    """
+    Receives the inspection report PDF as a multipart upload and emails
+    it to the recipient as an attachment.
+
+    Form fields:
+        recipientEmail   — recipient email address (required, validated)
+        sessionId        — inspection session id
+        masterFileName   — master file name
+        sampleFileName   — sample file name
+        reportPdf        — the PDF file attachment
+    """
+    logger.info("[SHARE REPORT] Request received")
+
+    recipient_email = request.form.get("recipientEmail", "").strip()
+    session_id = request.form.get("sessionId", "").strip()
+    master_file_name = request.form.get("masterFileName", "").strip()
+    sample_file_name = request.form.get("sampleFileName", "").strip()
+    report_pdf = request.files.get("reportPdf")
+
+    logger.info("[SHARE REPORT] Recipient: %s", recipient_email)
+
+    # Validate recipient email
+    if not recipient_email:
+        return jsonify({"error": "Recipient email is required."}), 400
+
+    email_regex = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
+    if not re.match(email_regex, recipient_email):
+        return jsonify({"error": "Please enter a valid email address."}), 400
+
+    # Validate PDF attachment
+    if report_pdf is None or report_pdf.filename == "":
+        return jsonify({"error": "Report PDF is required."}), 400
+
+    pdf_bytes = report_pdf.read()
+    if not pdf_bytes:
+        return jsonify({"error": "Report PDF is empty."}), 400
+
+    logger.info("[SHARE REPORT] PDF received")
+    logger.info("[SHARE REPORT] PDF size: %d bytes", len(pdf_bytes))
+
+    try:
+        send_inspection_report_email(
+            recipient_email=recipient_email,
+            session_id=session_id or "unknown",
+            master_file_name=master_file_name or "Unknown",
+            sample_file_name=sample_file_name or "Unknown",
+            pdf_bytes=pdf_bytes,
+        )
+    except ValueError as e:
+        # Configuration error — expose the missing variable names so the
+        # user knows exactly what to set, but never the credentials themselves
+        logger.error("[SHARE REPORT] Email configuration error: %s", e)
+        return jsonify({"error": str(e)}), 500
+    except Exception as e:
+        # SMTP / provider failure — do not expose internal details
+        logger.error("[SHARE REPORT] Email sending failed: %s", e)
+        return jsonify({"error": "Failed to send the email. Please try again."}), 500
+
+    return jsonify({
+        "success": True,
+        "message": "Inspection report shared successfully.",
+    })
 
 
 @app.route("/images/<session_id>/<filename>")

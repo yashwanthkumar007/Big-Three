@@ -10,6 +10,7 @@ import BrailleInspectionPage from "@/features/workspace/braille/BrailleInspectio
 import BarcodeInspectionPage from "@/features/workspace/barcode/BarcodeInspectionPage";
 import NotesInspectionPage from "@/features/workspace/notes/NotesInspectionPage";
 import WorkspacePage from "@/features/workspace/WorkspacePage";
+import DifferenceListPage from "@/features/workspace/components/DifferenceListPage";
 import ProtectedRoute from "@/routes/ProtectedRoute";
 import PublicRoute from "@/routes/PublicRoute";
 
@@ -77,5 +78,13 @@ export const router = createBrowserRouter([
         element: <WorkspacePage />,
       },
     ],
+  },
+  {
+    path: "/inspection/differences",
+    element: (
+      <ProtectedRoute>
+        <DifferenceListPage />
+      </ProtectedRoute>
+    ),
   },
 ]);
