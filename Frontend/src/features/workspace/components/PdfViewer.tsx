@@ -292,7 +292,18 @@ export default function PdfViewer({
         overflow: "auto",
 
         display: "flex",
-        justifyContent: "center",
+        /*
+         * flex-start (not center) is deliberate: with justify-content:
+         * center, when the zoomed page is wider than the container the
+         * overflow is split symmetrically and the LEFT side becomes
+         * unreachable by scroll — so scrollIntoView can't center a
+         * difference near the left edge (the box draws and hovers, but
+         * the view never scrolls to it). The page is instead centered
+         * horizontally inside a wrapper (see below) that is always at
+         * least as wide as the container, which keeps low-zoom centering
+         * while making left overflow reachable at high zoom.
+         */
+        justifyContent: "flex-start",
         alignItems: "flex-start",
 
         position: "relative",
@@ -368,6 +379,19 @@ export default function PdfViewer({
           );
         }}
       >
+        {/* Centering wrapper — see the justify-content comment on the scroll
+            container above. It is at least as wide as the container (so the
+            page still centers at low zoom) but grows to fit the page at high
+            zoom, keeping the left edge reachable by scrollIntoView. */}
+        <Box
+          sx={{
+            minWidth: "100%",
+            width: "max-content",
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "flex-start",
+          }}
+        >
         <Box
           ref={pageWrapperRef}
           sx={{
@@ -502,10 +526,10 @@ export default function PdfViewer({
                     `${highlightHeight}px`,
 
                   /*
-                   * Thin outline.
+                   * Thick outline to clearly mark the difference.
                    */
                   border:
-                    "1.5px solid #c63737",
+                    "3px solid #c63737",
 
                   /*
                    * Very light background.
@@ -534,9 +558,38 @@ export default function PdfViewer({
                   transition:
                     "left 0.2s ease, top 0.2s ease",
                 }}
-              />
+              >
+                {/* Difference number badge */}
+                <Box
+                  sx={{
+                    position: "absolute",
+                    left: -13,
+                    top: -13,
+                    minWidth: 26,
+                    height: 26,
+                    px: 0.5,
+                    borderRadius: "50%",
+                    bgcolor: "#c63737",
+                    color: "#FFFFFF",
+                    border: "2px solid #FFFFFF",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: 12,
+                    fontWeight: 700,
+                    lineHeight: 1,
+                    userSelect: "none",
+                    pointerEvents: "none",
+                    zIndex: 21,
+                    boxSizing: "border-box",
+                  }}
+                >
+                  {selectedDifference?.id}
+                </Box>
+              </Box>
             </Tooltip>
           )}
+        </Box>
         </Box>
       </Document>
 

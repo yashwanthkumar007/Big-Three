@@ -31,10 +31,14 @@ from src.exception import PipelineException
 from src.logger import logger
 
 # Set True once pairing is confirmed correct against the real GVW report.
-# While False: only Change/Insertion/Deletion/Location run. Bold/Color/
-# Case/Hyphen/Space are skipped, since they inherit whatever pairing the
+# While False: only Change/Insertion/Deletion/Location run, and the Bold/
+# Case/Hyphen/Space checkers are skipped (they inherit whatever pairing the
 # matcher produces — no point checking formatting on pairs that might
-# still be wrong.
+# still be wrong).
+#
+# NOTE: Color detection is deliberately NOT gated by this switch — it runs
+# whenever the user's Color filter is enabled (see the color_enabled branch
+# below), so ticking the Color checkbox actually detects color differences.
 ENABLE_FORMATTING_CHECKERS = False
 
 # Set True to call Doc Intelligence and fill in text PyMuPDF's live-text
@@ -320,13 +324,20 @@ def run_text_inspection(master_path: str, sample_path: str, filters: dict = None
         if insertion_enabled:
             findings += check_insertions(match_result["unmatched_sample"], matched_pairs=matched_pairs)
 
-        # Formatting/whitespace checkers additionally require the master
-        # ENABLE_FORMATTING_CHECKERS switch (pairing confidence gate) AND
-        # the individual filter being enabled.
+        # Color detection runs as soon as the user enables the Color filter,
+        # independent of the ENABLE_FORMATTING_CHECKERS pairing-confidence gate
+        # — the whole point is that ticking the Color checkbox actually detects
+        # color differences. (gapless/OCR rows with empty spans are skipped
+        # inside check_color, and _findings_for_enabled below still drops any
+        # "Color" finding if the filter got turned off.)
+        if color_enabled:
+            findings += check_color(matched_pairs)
+
+        # The remaining formatting/whitespace checkers additionally require the
+        # master ENABLE_FORMATTING_CHECKERS switch (pairing confidence gate)
+        # AND the individual filter being enabled.
         if ENABLE_FORMATTING_CHECKERS and bold_enabled:
             findings += check_bold(matched_pairs)
-        if ENABLE_FORMATTING_CHECKERS and color_enabled:
-            findings += check_color(matched_pairs)
         if ENABLE_FORMATTING_CHECKERS and case_enabled:
             findings += check_case(matched_pairs)
         if ENABLE_FORMATTING_CHECKERS and hyphen_enabled:

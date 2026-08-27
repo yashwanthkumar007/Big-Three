@@ -1,4 +1,6 @@
 import axios from "axios";
+import { generateInspectionSessionId } from "@/shared/utils/inspectionSessionId";
+import type { InspectionType } from "@/store/uploadStore";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 
@@ -17,6 +19,8 @@ export type TextInspectionUploadProgress = {
 export type TextInspectionApiOptions = {
   onStatus?: (status: TextInspectionUploadProgress) => void;
   sessionId?: string;
+  /** Inspection type used to build the dynamic session ID prefix (TXT/GRP/…). */
+  inspectionType?: InspectionType;
   /** Difference Filter payload forwarded to the backend `/api/inspect` call. */
   differenceFilters?: Record<string, boolean>;
 };
@@ -66,13 +70,14 @@ export type TextInspectionResult = {
   report: InspectionReport;
 };
 
-const generateSessionId = () => {
-  if (typeof crypto !== "undefined" && crypto.randomUUID) {
-    return crypto.randomUUID();
-  }
+/**
+ * Generates the dynamic inspection session ID (e.g. "TXT-20260826153045").
+ * The prefix is derived from the inspection type, so it works for every
+ * inspection — never hardcoded to Text only.
+ */
+const generateSessionId = (inspectionType?: string) =>
+  generateInspectionSessionId(inspectionType ?? "text");
 
-  return `text-inspection-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-};
 
 export type ShareInspectionReportParams = {
   recipientEmail: string;
@@ -142,7 +147,8 @@ export async function startTextInspection(
   sampleFile: File,
   options: TextInspectionApiOptions = {}
 ): Promise<TextInspectionResult> {
-  const sessionId = options.sessionId ?? generateSessionId();
+  const sessionId =
+    options.sessionId ?? generateSessionId(options.inspectionType);
 
   const setStatus = (status: string, progress?: number) => {
     options.onStatus?.({ status, progress });

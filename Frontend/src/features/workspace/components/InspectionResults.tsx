@@ -54,9 +54,13 @@ import DownloadIcon from "@mui/icons-material/Download";
 import CompareIcon from "@mui/icons-material/Compare";
 
 import ViewerPane from "./ViewerPane";
+import ReportOptionsDialog, {
+  type ReportOptions,
+} from "./ReportOptionsDialog";
 import type { BoundingBox } from "@/shared/api/textInspectionApi";
 import { shareInspectionReport } from "@/shared/api/textInspectionApi";
 import { truncateFileName } from "@/shared/utils/truncateFileName";
+import { getSession } from "@/shared/utils/auth";
 import { useUploadStore } from "@/store/uploadStore";
 import {
   downloadInspectionPdf,
@@ -473,8 +477,12 @@ export default function InspectionResults({
       console.log("[SHARE REPORT] Recipient email:", shareEmail.trim());
       console.log("[SHARE REPORT] Generating PDF");
 
+      // `inspectionType` is read straight off the current result, never
+      // hardcoded, so the PDF title/footer match whichever inspection
+      // (text, graphics, spelling, braille, barcode, notes) produced it.
       const pdfBlob = await generateInspectionReportPdfBlob({
         sessionId: result.inspectionId,
+        inspectionType: result.inspectionType,
         result,
         commentSelections,
         levelSelections,
@@ -502,6 +510,63 @@ export default function InspectionResults({
     } finally {
       setShareLoading(false);
     }
+  };
+
+  /* ------------------------------------------------------------------ */
+  /* Report options dialog (Download PDF)                               */
+  /* ------------------------------------------------------------------ */
+
+  const [reportOptionsOpen, setReportOptionsOpen] = useState(false);
+
+  const handleDownloadClick = () => {
+    setReportOptionsOpen(true);
+  };
+
+  /**
+   * Build the set of level options available for the download popup
+   * dynamically from the levels actually present in the difference
+   * table (stored selections + default level + "None" when empty).
+   * This makes the popup filters dynamic so future admin-defined
+   * custom levels automatically appear here too.
+   */
+  const availableLevelOptions = useMemo(() => {
+    const levels = new Set<string>(["None"]);
+    for (const diff of result.differences) {
+      const raw = levelSelections[diff.id] ?? diff.level ?? "";
+      const level = raw && raw.trim() !== "" ? raw : "None";
+      levels.add(level);
+    }
+    return Array.from(levels);
+  }, [result.differences, levelSelections]);
+
+  const handleDownloadWithOptions = (options: ReportOptions) => {
+    setReportOptionsOpen(false);
+
+    const session = getSession();
+    let performedBy = "User";
+
+    if (session?.name) {
+      performedBy = session.name;
+    } else if (session?.email) {
+      const emailUsername = session.email.split("@")[0];
+      performedBy =
+        emailUsername.charAt(0).toUpperCase() + emailUsername.slice(1);
+    }
+
+    // Same as the Share flow: `inspectionType` comes from the live
+    // result object, never a hardcoded string, so Text/Graphics/
+    // Spelling/Braille/Barcode/Notes reports each get the right title.
+    void downloadInspectionPdf({
+      sessionId: result.inspectionId,
+      inspectionType: result.inspectionType,
+      result,
+      commentSelections,
+      levelSelections,
+      differenceFilters,
+      reportOptions: options,
+      performedBy,
+      masterFile,
+    });
   };
 
   /* ------------------------------------------------------------------ */
@@ -858,15 +923,7 @@ export default function InspectionResults({
         <Tooltip title="Download the PDF report" arrow>
           <IconButton
             size="small"
-            onClick={() => {
-              void downloadInspectionPdf({
-                sessionId: result.inspectionId,
-                result,
-                commentSelections,
-                levelSelections,
-                differenceFilters,
-              });
-            }}
+            onClick={handleDownloadClick}
             sx={{
               bgcolor: "#2A276E",
               color: "#ffffff",
@@ -1674,7 +1731,7 @@ export default function InspectionResults({
     : item.type === "change" || item.type === "insertion"
     ? "0 0 0 2px #e53935"
     : "none",
-
+ 
   color: "#2f353c",
 
   transition:
@@ -1947,6 +2004,18 @@ export default function InspectionResults({
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* =========================================================
+          REPORT OPTIONS DIALOG (DOWNLOAD PDF)
+         ========================================================= */}
+
+      <ReportOptionsDialog
+        key={availableLevelOptions.join("|")}
+        open={reportOptionsOpen}
+        onClose={() => setReportOptionsOpen(false)}
+        onDownload={handleDownloadWithOptions}
+        levelOptions={availableLevelOptions}
+      />
     </Box>
   );
 }

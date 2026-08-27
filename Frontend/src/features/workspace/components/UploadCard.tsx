@@ -274,7 +274,7 @@ export default function UploadCard({
           handleMasterFile(file);
         }}
         sx={{
-          height: 170,
+          height: master ? 210 : 170,
 
           border:
             masterError !== ""
@@ -350,7 +350,10 @@ export default function UploadCard({
         ) : (
           <Stack
             spacing={2}
-            sx={{ alignItems: "center" }}
+            sx={{ alignItems: "center", 
+              pt: 1, 
+              pb: 2  // more space above the icon
+            }}
           >
             <DescriptionOutlinedIcon
               sx={{
@@ -445,7 +448,7 @@ export default function UploadCard({
           handleSampleFile(file);
         }}
         sx={{
-          height: 170,
+          height: sample ? 210 : 170,
 
           border:
             sampleError !== ""
@@ -518,7 +521,10 @@ export default function UploadCard({
         ) : (
           <Stack
             spacing={2}
-            sx={{ alignItems: "center" }}
+            sx={{ alignItems: "center",
+              pt: 1,   // add top spacing
+    pb: 2
+             }}
           >
             <DescriptionOutlinedIcon
               sx={{

@@ -24,7 +24,7 @@ import InspectionResults, {
   type InspectionDifference,
 } from "./components/InspectionResults";
 
-import { useUploadStore } from "@/store/uploadStore";
+import { useUploadStore, type InspectionType } from "@/store/uploadStore";
 import { truncateFileName } from "@/shared/utils/truncateFileName";
 
 import { startTextInspection } from "@/shared/api/textInspectionApi";
@@ -52,6 +52,7 @@ export default function WorkspacePage() {
     inspectionStatus,
     inspectionReport,
     differenceFilters,
+    sessionId: storeSessionId,
     setInspectionStatus,
     setInspectionReport,
     setSessionId,
@@ -115,6 +116,9 @@ export default function WorkspacePage() {
         masterFile,
         sampleFile,
         {
+          /* Dynamic session ID prefix follows the inspection type
+           * (text -> TXT-, graphics -> GRP-, etc.). */
+          inspectionType: inspectionType as InspectionType,
           differenceFilters,
           onStatus: ({
             status: currentStatus,
@@ -293,7 +297,14 @@ export default function WorkspacePage() {
         );
 
       return {
+        /*
+         * Dynamic inspection session ID (e.g. "TXT-20260826153045").
+         * Generated once per inspection run and stored in the shared
+         * store, so it stays stable across re-renders and is reused
+         * by the PDF report, share flow, and file names.
+         */
         inspectionId:
+          storeSessionId ??
           `report-${inspectionReport.dpi}`,
 
         inspectionType:
