@@ -24,9 +24,10 @@ import sys
 from flask import Flask, request, jsonify, send_from_directory, render_template_string
 
 sys.path.append(os.path.dirname(__file__))
-from src.pipelines.comparison_pipeline import run_text_inspection
+from src.inspection_registry import get_inspection_config
 from src.pipelines.report_builder import build_report, render_page
 from src.email_service import send_inspection_report_email
+from src.azure_service import get_backend_infrastructure_status
 from src.logger import logger
 
 app = Flask(__name__)
@@ -40,6 +41,24 @@ os.makedirs(OUTPUT_ROOT, exist_ok=True)
 @app.route("/")
 def index():
     return render_template_string(INDEX_HTML)
+
+
+@app.route("/api/health", methods=["GET"])
+def api_health():
+    return jsonify({
+        "status": "ok",
+        "service": "medinspect-backend",
+        "azure": get_backend_infrastructure_status(),
+    })
+
+
+@app.route("/api/azure/health", methods=["GET"])
+def api_azure_health():
+    try:
+        payload = get_backend_infrastructure_status()
+        return jsonify(payload), 200 if payload.get("ready") else 503
+    except Exception as exc:  # pragma: no cover - defensive guard for runtime env issues
+        return jsonify({"status": "error", "ready": False, "error": str(exc)}), 503
 
 
 @app.route("/api/upload", methods=["POST"])
@@ -88,6 +107,16 @@ def api_inspect():
     # produced or reported. When absent, every type is checked.
     filters = data.get("filters")
 
+    # Determine which inspection pipeline to run.
+    # Falls back to "text" for backward compatibility when the
+    # front-end doesn't send inspection_type (older clients).
+    inspection_type = data.get("inspection_type", "text")
+
+    try:
+        config = get_inspection_config(inspection_type)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
     session_dir = os.path.join(UPLOAD_ROOT, session_id)
     master_path = os.path.join(session_dir, "master.pdf")
     sample_path = os.path.join(session_dir, "sample.pdf")
@@ -96,9 +125,9 @@ def api_inspect():
         return jsonify({"error": "Both Master and Sample must be uploaded first"}), 400
 
     try:
-        result = run_text_inspection(master_path, sample_path, filters=filters)
+        result = config.pipeline(master_path, sample_path, filters=filters)
     except Exception as e:
-        return jsonify({"error": f"Inspection failed: {str(e)}"}), 500
+        return jsonify({"error": f"{config.label} failed: {str(e)}"}), 500
 
     output_dir = os.path.join(OUTPUT_ROOT, session_id)
 

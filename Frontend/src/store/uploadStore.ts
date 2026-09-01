@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import type { InspectionReport } from "@/shared/api/textInspectionApi";
+import type { InspectionReport } from "@/shared/api/inspectionApi";
 
 export type InspectionType =
   | "text"

@@ -1,23 +1,31 @@
 import axios from "axios";
 import { generateInspectionSessionId } from "@/shared/utils/inspectionSessionId";
+import {
+  INSPECTION_ERROR_PREFIX,
+  getInspectionLabel,
+} from "@/shared/config/inspectionConfig";
 import type { InspectionType } from "@/store/uploadStore";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 
-export type TextInspectionStatus =
+/**
+ * Upload / inspection lifecycle state — generic across ALL inspection
+ * types (text, graphics, spelling, braille, barcode, notes, …).
+ */
+export type InspectionApiStatus =
   | "idle"
   | "uploading"
   | "inspecting"
   | "completed"
   | "failed";
 
-export type TextInspectionUploadProgress = {
+export type InspectionUploadProgress = {
   status: string;
   progress?: number;
 };
 
-export type TextInspectionApiOptions = {
-  onStatus?: (status: TextInspectionUploadProgress) => void;
+export type InspectionApiOptions = {
+  onStatus?: (status: InspectionUploadProgress) => void;
   sessionId?: string;
   /** Inspection type used to build the dynamic session ID prefix (TXT/GRP/…). */
   inspectionType?: InspectionType;
@@ -65,7 +73,10 @@ export type InspectionReport = {
   suppressed_shifts: { shift: string; count: number }[];
 };
 
-export type TextInspectionResult = {
+/**
+ * Result returned by `startInspection` — generic, not tied to Text.
+ */
+export type InspectionRunResult = {
   sessionId: string;
   report: InspectionReport;
 };
@@ -142,42 +153,71 @@ export async function shareInspectionReport({
   }
 }
 
-export async function startTextInspection(
+/**
+ * Uploads a single file (master or sample) to the backend.
+ * Reused by `startInspection` below — the upload endpoint is already
+ * inspection-agnostic; it only needs the session_id and side.
+ */
+const uploadFile = async (
+  file: File,
+  sessionId: string,
+  side: "master" | "sample",
+) => {
+  const formData = new FormData();
+  formData.append("session_id", sessionId);
+  formData.append("side", side);
+  formData.append("file", file);
+
+    await axios.post(`${API_BASE_URL}/api/upload`, formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+};
+
+/**
+ * Runs a generic inspection (text, graphics, spelling, braille, barcode,
+ * notes, or any future type registered on the backend).
+ *
+ * The function is fully dynamic:
+ *   • The session ID prefix is derived from `inspectionType`.
+ *   • The `/api/inspect` payload includes `inspection_type` so the
+ *     backend dispatches to the correct pipeline.
+ *   • Status messages and error text adapt to the inspection type.
+ *
+ * To support a new inspection type, just add it to `InspectionType`
+ * in `uploadStore.ts` and register a pipeline on the backend — no
+ * changes needed here.
+ */
+export async function startInspection(
   masterFile: File,
   sampleFile: File,
-  options: TextInspectionApiOptions = {}
-): Promise<TextInspectionResult> {
+  options: InspectionApiOptions = {}
+): Promise<InspectionRunResult> {
+  const inspectionType = options.inspectionType ?? "text";
+  const label = getInspectionLabel(inspectionType);
+  const errorPrefix = INSPECTION_ERROR_PREFIX[inspectionType as InspectionType] ??
+    `${label} failed`;
+
   const sessionId =
-    options.sessionId ?? generateSessionId(options.inspectionType);
+    options.sessionId ?? generateSessionId(inspectionType);
 
   const setStatus = (status: string, progress?: number) => {
     options.onStatus?.({ status, progress });
   };
 
-  setStatus("Uploading files...", 10);
-
-  const uploadFile = async (file: File, side: "master" | "sample") => {
-    const formData = new FormData();
-    formData.append("session_id", sessionId);
-    formData.append("side", side);
-    formData.append("file", file);
-
-    await axios.post(`${API_BASE_URL}/api/upload`, formData, {
-      headers: { "Content-Type": "multipart/form-data" },
-    });
-  };
+  setStatus(`Uploading files...`, 10);
 
   try {
-    await uploadFile(masterFile, "master");
-    setStatus("Loading Master...", 40);
+    await uploadFile(masterFile, sessionId, "master");
+    setStatus(`Loading ${label} — Master...`, 40);
 
-    await uploadFile(sampleFile, "sample");
-    setStatus("Loading Sample...", 65);
+    await uploadFile(sampleFile, sessionId, "sample");
+    setStatus(`Loading ${label} — Sample...`, 65);
 
-    setStatus("Comparing text...", 80);
+    setStatus(`Comparing ${label.toLowerCase()}...`, 80);
 
     const response = await axios.post(`${API_BASE_URL}/api/inspect`, {
       session_id: sessionId,
+      inspection_type: inspectionType,
       ...(options.differenceFilters
         ? { filters: options.differenceFilters }
         : {}),
@@ -193,11 +233,25 @@ export async function startTextInspection(
     const axiosError = error as {
       response?: { data?: { error?: string } };
     };
-    const message =
-      axiosError?.response?.data?.error ??
-      "Text inspection failed. Please try again.";
+    const backendMessage =
+      axiosError?.response?.data?.error ?? "Unknown error from the server.";
 
-    console.error("Text inspection API error:", error);
+    const message = `${errorPrefix}. ${backendMessage}`;
+
+    console.error(`[${label}] API error:`, error);
     throw new Error(message, { cause: error });
   }
 }
+
+/* -------------------------------------------------------------------------- */
+/* Backward-compatibility re-exports                                          */
+/* -------------------------------------------------------------------------- */
+/*
+ * Old code that hasn't been migrated yet can still import the old names.
+ * Remove these aliases once all consumers have been updated.
+ */
+export type TextInspectionResult = InspectionRunResult;
+export type TextInspectionApiOptions = InspectionApiOptions;
+export type TextInspectionUploadProgress = InspectionUploadProgress;
+export type TextInspectionStatus = InspectionApiStatus;
+export const startTextInspection = startInspection;

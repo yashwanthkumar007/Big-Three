@@ -23,8 +23,8 @@ import type { InspectionType } from "@/store/uploadStore";
 import { truncateFileName } from "@/shared/utils/truncateFileName";
 
 import {
-  TEXT_INSPECTION_FILE_TYPES,
-  validateFile
+  getFileTypesForInspection,
+  validateFile,
 } from "@/shared/utils/fileValidation";
 
 type UploadCardProps = {
@@ -83,11 +83,11 @@ export default function UploadCard({
   /*                            Master File Handler                             */
   /* -------------------------------------------------------------------------- */
 
-  const handleMasterFile = (file: File) => {
+    const handleMasterFile = (file: File) => {
 
     const result = validateFile(
       file,
-      TEXT_INSPECTION_FILE_TYPES
+      getFileTypesForInspection(inspectionType)
     );
 
     if (!result.isValid) {
@@ -108,11 +108,11 @@ export default function UploadCard({
   /*                            Sample File Handler                             */
   /* -------------------------------------------------------------------------- */
 
-  const handleSampleFile = (file: File) => {
+    const handleSampleFile = (file: File) => {
 
     const result = validateFile(
       file,
-      TEXT_INSPECTION_FILE_TYPES
+      getFileTypesForInspection(inspectionType)
     );
 
     if (!result.isValid) {
@@ -251,7 +251,7 @@ export default function UploadCard({
         hidden
         ref={masterInputRef}
         type="file"
-        accept={TEXT_INSPECTION_FILE_TYPES.join(",")}
+        accept={getFileTypesForInspection(inspectionType).join(",")}
         onChange={onMasterInputChange}
       />
 
@@ -425,7 +425,7 @@ export default function UploadCard({
         hidden
         ref={sampleInputRef}
         type="file"
-        accept={TEXT_INSPECTION_FILE_TYPES.join(",")}
+        accept={getFileTypesForInspection(inspectionType).join(",")}
         onChange={onSampleInputChange}
       />
 

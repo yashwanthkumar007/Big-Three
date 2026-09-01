@@ -1,16 +1,19 @@
 export const MAX_FILE_SIZE = 10 * 1024 * 1024 * 1024; // 10 GB
 
-export const TEXT_INSPECTION_FILE_TYPES = [
-  ".pdf",
-  ".doc",
-  ".docx",
-  ".txt",
-  ".rtf",
-  ".xml",
-  ".xls",
-  ".xlsx",
-  ".ai"
-];
+/**
+ * File extensions allowed for each inspection type.
+ * Imported from the centralized config — adding a new inspection
+ * type only requires an entry in `inspectionConfig.ts`.
+ *
+ * `getFileTypesForInspection` is re-exported here for convenience so
+ * callers (e.g. UploadCard) import both the validation helpers and the
+ * per-inspection file types from a single module.
+ */
+export {
+  INSPECTION_FILE_TYPES,
+  getFileTypesForInspection,
+  TEXT_INSPECTION_FILE_TYPES,
+} from "@/shared/config/inspectionConfig";
 
 export interface ValidationResult {
   isValid: boolean;

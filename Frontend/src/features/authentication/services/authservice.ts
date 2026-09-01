@@ -4,6 +4,7 @@ type LoginRequest = {
 };
 
 export const login = async ({ email, password }: LoginRequest) => {
+  // Tenant Admin account — has an Admin features gear icon in the navbar.
   if (
     email === "admin@example.com" &&
     password === "Password@123"
@@ -14,6 +15,23 @@ export const login = async ({ email, password }: LoginRequest) => {
         id: 1,
         name: "Administrator",
         email,
+        accountType: "Tenant admin",
+      },
+    };
+  }
+
+  // Regular User account — can only perform inspections; no Admin gear icon.
+  if (
+    email === "user@example.com" &&
+    password === "User@123"
+  ) {
+    return {
+      accessToken: "mock-user-jwt-token",
+      user: {
+        id: 2,
+        name: "Standard User",
+        email,
+        accountType: "user",
       },
     };
   }

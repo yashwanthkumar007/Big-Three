@@ -10,5 +10,8 @@ setup(
         "pandas",
         "numpy",
         "scipy",
+        "azure-cosmos",
+        "azure-storage-blob",
+        "azure-identity",
     ],
 )

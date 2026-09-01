@@ -6,6 +6,7 @@ import type {
   InspectionType,
 } from "@/store/uploadStore";
 import type { ReportOptions } from "@/features/workspace/components/ReportOptionsDialog";
+import { getInspectionLabel } from "@/shared/config/inspectionConfig";
 import OrganizationLogo from "@/assets/logos/icon.png";
 
 /* ------------------------------------------------------------------ */
@@ -918,17 +919,11 @@ export async function generateInspectionPdf({
     second: "2-digit",
   });
 
-  // Report title depends on which inspection type produced this result.
-  const reportTitleMap: Record<InspectionType, string> = {
-    text: "Text Inspection Report",
-    graphics: "Graphics Inspection Report",
-    spelling: "Spelling Inspection Report",
-    braille: "Braille Inspection Report",
-    barcode: "Barcode Inspection Report",
-    notes: "Notes Inspection Report",
-  };
-
-  const reportTitle = reportTitleMap[inspectionType];
+    // Report title is generated dynamically from the inspection label,
+  // so any new inspection type (text, graphics, spelling, …) automatically
+  // gets the correct title — e.g. "Text Inspection Report",
+  // "Graphics Inspection Report", etc.
+  const reportTitle = `${getInspectionLabel(inspectionType)} Report`;
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(16);

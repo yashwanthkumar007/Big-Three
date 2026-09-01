@@ -30,7 +30,7 @@ export default function LoginForm() {
 
       console.log(response);
       // Store user data in localStorage with session expiry
-      setSession(response.user);
+      setSession(response.user, response.accessToken);
       // Navigate to dashboard on successful login
       navigate("/dashboard");
     } catch (err) {

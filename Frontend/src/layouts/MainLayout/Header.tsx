@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import {
@@ -7,6 +7,9 @@ import {
   Box,
   Button,
   IconButton,
+  ListItemIcon,
+  Menu,
+  MenuItem,
   Stack,
   Toolbar,
   Tooltip,
@@ -17,19 +20,23 @@ import DescriptionOutlinedIcon from "@mui/icons-material/DescriptionOutlined";
 import ExtensionOutlinedIcon from "@mui/icons-material/ExtensionOutlined";
 import SpellcheckOutlinedIcon from "@mui/icons-material/SpellcheckOutlined";
 import StickyNote2OutlinedIcon from "@mui/icons-material/StickyNote2Outlined";
+import SettingsOutlinedIcon from "@mui/icons-material/SettingsOutlined";
 import HelpOutlineOutlinedIcon from "@mui/icons-material/HelpOutlineOutlined";
 import LogoutOutlinedIcon from "@mui/icons-material/LogoutOutlined";
+import PersonOutlineOutlinedIcon from "@mui/icons-material/PersonOutlineOutlined";
+import TuneOutlinedIcon from "@mui/icons-material/TuneOutlined";
 
 import BarcodeIcon from "./BarcodeIcon";
 import BrailleDotsIcon from "./BrailleDotsIcon";
 
 import OrganizationLogo from "@/assets/logos/icon.png";
-import { clearSession } from "@/shared/utils/auth";
+import { clearSession, isTenantAdmin } from "@/shared/utils/auth";
 
 type User = {
   id: number;
   name: string;
   email: string;
+  accountType?: string;
 };
 
 export default function Header() {
@@ -55,6 +62,13 @@ export default function Header() {
 
     return "User";
   }, []);
+
+  // Only Tenant Admins see the Admin (gear) shortcut in the navbar.
+  const isAdmin = useMemo(() => isTenantAdmin(), []);
+
+  // Profile dropdown menu
+  const [profileMenuAnchor, setProfileMenuAnchor] = useState<HTMLElement | null>(null);
+  const closeProfileMenu = () => setProfileMenuAnchor(null);
 
   const modules = [
     {
@@ -192,10 +206,10 @@ export default function Header() {
             {username.charAt(0).toUpperCase()}
           </Avatar>
 
-          {/* Profile */}
+          {/* Profile — opens dropdown menu */}
           <Tooltip title="Profile">
             <Button
-              onClick={() => navigate("/profile")}
+              onClick={(e) => setProfileMenuAnchor(e.currentTarget)}
               sx={{
                 color: "white",
                 textTransform: "none",
@@ -208,7 +222,7 @@ export default function Header() {
                 transition: "all .25s ease",
 
                 bgcolor:
-                  location.pathname === "/profile"
+                  location.pathname === "/profile" || Boolean(profileMenuAnchor)
                     ? "#703E97"
                     : "transparent",
 
@@ -221,6 +235,89 @@ export default function Header() {
               {username}
             </Button>
           </Tooltip>
+
+          <Menu
+            anchorEl={profileMenuAnchor}
+            open={Boolean(profileMenuAnchor)}
+            onClose={closeProfileMenu}
+            anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+            transformOrigin={{ vertical: "top", horizontal: "right" }}
+            slotProps={{
+              paper: {
+                sx: {
+                  mt: 1,
+                  minWidth: 200,
+                  border: "1px solid #E0E0E6",
+                  boxShadow: "0 8px 24px rgba(42, 39, 110, 0.15)"
+                }
+              }
+            }}
+          >
+            <MenuItem
+              onClick={() => {
+                closeProfileMenu();
+                navigate("/profile");
+              }}
+            >
+              <ListItemIcon>
+                <PersonOutlineOutlinedIcon fontSize="small" sx={{ color: "#2A276E" }} />
+              </ListItemIcon>
+              My Profile
+            </MenuItem>
+
+            {isAdmin && (
+              <MenuItem
+                onClick={() => {
+                  closeProfileMenu();
+                  navigate("/settings/system");
+                }}
+              >
+                <ListItemIcon>
+                  <TuneOutlinedIcon fontSize="small" sx={{ color: "#2A276E" }} />
+                </ListItemIcon>
+                System Setup
+              </MenuItem>
+            )}
+
+            <MenuItem
+              onClick={() => {
+                closeProfileMenu();
+                handleLogout();
+              }}
+            >
+              <ListItemIcon>
+                <LogoutOutlinedIcon fontSize="small" sx={{ color: "#C62828" }} />
+              </ListItemIcon>
+              Logout
+            </MenuItem>
+          </Menu>
+
+          {/* Admin (gear) shortcut — only visible to Tenant admin accounts,
+              shown after the admin name */}
+          {isAdmin && (
+            <Tooltip title="System Setup">
+              <IconButton
+                onClick={() => navigate("/settings/system")}
+                sx={{
+                  color: "white",
+                  borderRadius: 2,
+                  transition: "all .25s ease",
+
+                  bgcolor:
+                    location.pathname.startsWith("/settings") || location.pathname.startsWith("/admin")
+                      ? "#703E97"
+                      : "transparent",
+
+                  "&:hover": {
+                    bgcolor: "#703E97",
+                    transform: "translateY(-2px)"
+                  }
+                }}
+              >
+                <SettingsOutlinedIcon />
+              </IconButton>
+            </Tooltip>
+          )}
 
           {/* FAQ */}
           <Tooltip title="FAQ">

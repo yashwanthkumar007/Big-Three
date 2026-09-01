@@ -57,11 +57,14 @@ import ViewerPane from "./ViewerPane";
 import ReportOptionsDialog, {
   type ReportOptions,
 } from "./ReportOptionsDialog";
-import type { BoundingBox } from "@/shared/api/textInspectionApi";
-import { shareInspectionReport } from "@/shared/api/textInspectionApi";
+import type { BoundingBox } from "@/shared/api/inspectionApi";
+import { shareInspectionReport } from "@/shared/api/inspectionApi";
 import { truncateFileName } from "@/shared/utils/truncateFileName";
 import { getSession } from "@/shared/utils/auth";
-import { useUploadStore } from "@/store/uploadStore";
+import {
+  useUploadStore,
+  type InspectionType,
+} from "@/store/uploadStore";
 import {
   downloadInspectionPdf,
   generateInspectionReportPdfBlob,
@@ -248,13 +251,7 @@ export type PageDimensions = {
 
 export type InspectionResult = {
   inspectionId: string;
-  inspectionType:
-    | "text"
-    | "graphics"
-    | "spelling"
-    | "braille"
-    | "barcode"
-    | "notes";
+  inspectionType: InspectionType;
   masterFileName: string;
   sampleFileName: string;
   totalDifferences: number;
