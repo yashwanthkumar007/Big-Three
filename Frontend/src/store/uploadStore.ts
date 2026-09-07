@@ -1,6 +1,5 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
-import type { InspectionReport } from "@/shared/api/textInspectionApi";
+import type { InspectionReport } from "@/shared/api/inspectionApi";
 
 export type InspectionType =
   | "text"
@@ -168,12 +167,111 @@ export function subscribeToStateUpdates(
 }
 
 /* ------------------------------------------------------------------ */
-/* Zustand store with persist middleware                              */
+/* Zustand store backed by backend storage, not local browser storage    */
 /* ------------------------------------------------------------------ */
 
-export const useUploadStore = create<UploadState>()(
-  persist(
-    (set, get) => ({
+export const useUploadStore = create<UploadState>()((set, get) => ({
+  masterFile: null,
+  sampleFile: null,
+  masterFileName: null,
+  sampleFileName: null,
+  inspectionType: null,
+  inspectionStatus: "idle",
+  inspectionReport: null,
+  sessionId: null,
+  error: null,
+  differenceFilters: { ...DEFAULT_DIFFERENCE_FILTERS },
+  commentSelections: {},
+  levelSelections: {},
+  customComments: [],
+
+  setMasterFile: (file) =>
+    set({
+      masterFile: file,
+      masterFileName: file?.name ?? null,
+    }),
+
+  setSampleFile: (file) =>
+    set({
+      sampleFile: file,
+      sampleFileName: file?.name ?? null,
+    }),
+
+  setInspectionType: (type) =>
+    set({
+      inspectionType: type,
+    }),
+
+  setInspectionStatus: (status) =>
+    set({
+      inspectionStatus: status,
+    }),
+
+  setInspectionReport: (report) =>
+    set({
+      inspectionReport: report,
+    }),
+
+  setSessionId: (sessionId) =>
+    set({
+      sessionId,
+    }),
+
+  setError: (error) =>
+    set({
+      error,
+    }),
+
+  setDifferenceFilters: (filters) =>
+    set({
+      differenceFilters: filters,
+    }),
+
+  setCommentSelections: (selections) => {
+    set({ commentSelections: selections });
+    const state = get();
+    broadcastStateUpdate({
+      commentSelections: selections,
+      levelSelections: state.levelSelections,
+      inspectionReport: state.inspectionReport,
+      masterFileName: state.masterFileName,
+      sampleFileName: state.sampleFileName,
+      sessionId: state.sessionId,
+    });
+  },
+
+  setLevelSelections: (selections) => {
+    set({ levelSelections: selections });
+    const state = get();
+    broadcastStateUpdate({
+      commentSelections: state.commentSelections,
+      levelSelections: selections,
+      inspectionReport: state.inspectionReport,
+      masterFileName: state.masterFileName,
+      sampleFileName: state.sampleFileName,
+      sessionId: state.sessionId,
+    });
+  },
+
+  setCustomComments: (comments) =>
+    set({
+      customComments: comments,
+    }),
+
+  clearMasterFile: () =>
+    set({
+      masterFile: null,
+      masterFileName: null,
+    }),
+
+  clearSampleFile: () =>
+    set({
+      sampleFile: null,
+      sampleFileName: null,
+    }),
+
+  clearAll: () =>
+    set({
       masterFile: null,
       sampleFile: null,
       masterFileName: null,
@@ -187,124 +285,5 @@ export const useUploadStore = create<UploadState>()(
       commentSelections: {},
       levelSelections: {},
       customComments: [],
-
-      setMasterFile: (file) =>
-        set({
-          masterFile: file,
-          masterFileName: file?.name ?? null,
-        }),
-
-      setSampleFile: (file) =>
-        set({
-          sampleFile: file,
-          sampleFileName: file?.name ?? null,
-        }),
-
-      setInspectionType: (type) =>
-        set({
-          inspectionType: type,
-        }),
-
-      setInspectionStatus: (status) =>
-        set({
-          inspectionStatus: status,
-        }),
-
-      setInspectionReport: (report) =>
-        set({
-          inspectionReport: report,
-        }),
-
-      setSessionId: (sessionId) =>
-        set({
-          sessionId,
-        }),
-
-      setError: (error) =>
-        set({
-          error,
-        }),
-
-      setDifferenceFilters: (filters) =>
-        set({
-          differenceFilters: filters,
-        }),
-
-      setCommentSelections: (selections) => {
-        set({ commentSelections: selections });
-        const state = get();
-        broadcastStateUpdate({
-          commentSelections: selections,
-          levelSelections: state.levelSelections,
-          inspectionReport: state.inspectionReport,
-          masterFileName: state.masterFileName,
-          sampleFileName: state.sampleFileName,
-          sessionId: state.sessionId,
-        });
-      },
-
-      setLevelSelections: (selections) => {
-        set({ levelSelections: selections });
-        const state = get();
-        broadcastStateUpdate({
-          commentSelections: state.commentSelections,
-          levelSelections: selections,
-          inspectionReport: state.inspectionReport,
-          masterFileName: state.masterFileName,
-          sampleFileName: state.sampleFileName,
-          sessionId: state.sessionId,
-        });
-      },
-
-      setCustomComments: (comments) =>
-        set({
-          customComments: comments,
-        }),
-
-      clearMasterFile: () =>
-        set({
-          masterFile: null,
-          masterFileName: null,
-        }),
-
-      clearSampleFile: () =>
-        set({
-          sampleFile: null,
-          sampleFileName: null,
-        }),
-
-      clearAll: () =>
-        set({
-          masterFile: null,
-          sampleFile: null,
-          masterFileName: null,
-          sampleFileName: null,
-          inspectionType: null,
-          inspectionStatus: "idle",
-          inspectionReport: null,
-          sessionId: null,
-          error: null,
-          differenceFilters: { ...DEFAULT_DIFFERENCE_FILTERS },
-          commentSelections: {},
-          levelSelections: {},
-          customComments: [],
-        }),
     }),
-    {
-      name: "text-inspection-store",
-      // Only persist serializable data — File objects cannot be stored
-      partialize: (state) => ({
-        masterFileName: state.masterFileName,
-        sampleFileName: state.sampleFileName,
-        inspectionType: state.inspectionType,
-        inspectionStatus: state.inspectionStatus,
-        inspectionReport: state.inspectionReport,
-        sessionId: state.sessionId,
-        differenceFilters: state.differenceFilters,
-        commentSelections: state.commentSelections,
-        levelSelections: state.levelSelections,
-        customComments: state.customComments,
-      }),
-    }
-  )
-);
+}));

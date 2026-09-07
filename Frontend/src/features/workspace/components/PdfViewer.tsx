@@ -17,7 +17,7 @@ import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 
 import type { InspectionDifference } from "./InspectionResults";
-import type { BoundingBox } from "@/shared/api/textInspectionApi";
+import type { BoundingBox } from "@/shared/api/inspectionApi";
 
 pdfjs.GlobalWorkerOptions.workerSrc =
   "/pdf.worker.min.mjs";

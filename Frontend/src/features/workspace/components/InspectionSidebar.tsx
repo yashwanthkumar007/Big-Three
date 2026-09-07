@@ -19,6 +19,7 @@ import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 
 import { useUploadStore } from "@/store/uploadStore";
 import type { DifferenceFilters } from "@/store/uploadStore";
+import { getInspectionLabel } from "@/shared/config/inspectionConfig";
 
 type InspectionSidebarProps = {
   inspectionType: string;
@@ -26,14 +27,6 @@ type InspectionSidebarProps = {
   onInspect: () => void;
 };
 
-const inspectionLabels: Record<string, string> = {
-  text: "Text Inspection",
-  graphics: "Graphics Inspection",
-  spelling: "Spelling Inspection",
-  braille: "Braille Inspection",
-  barcode: "Barcode Inspection",
-  notes: "Notes Inspection",
-};
 
 export default function InspectionSidebar({
   inspectionType,
@@ -85,7 +78,7 @@ export default function InspectionSidebar({
           variant="h5"
           sx={{ fontWeight: 700 }}
         >
-          {inspectionLabels[inspectionType] ?? `${inspectionType.charAt(0).toUpperCase()}${inspectionType.slice(1)} Inspection`}
+        {getInspectionLabel(inspectionType)}
         </Typography>
 
         <Button

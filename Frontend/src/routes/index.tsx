@@ -11,7 +11,17 @@ import BarcodeInspectionPage from "@/features/workspace/barcode/BarcodeInspectio
 import NotesInspectionPage from "@/features/workspace/notes/NotesInspectionPage";
 import WorkspacePage from "@/features/workspace/WorkspacePage";
 import DifferenceListPage from "@/features/workspace/components/DifferenceListPage";
+import ProfilePage from "@/features/profile/pages/ProfilePage";
+import AdminPage from "@/features/admin/pages/AdminPage";
+import SystemSetupPage from "@/features/admin/pages/SystemSetupPage";
+import UserManagementPage from "@/features/admin/pages/UserManagementPage";
+import LoggedInUsersPage from "@/features/admin/pages/LoggedInUsersPage";
+import AuditTrailPage from "@/features/admin/pages/AuditTrailPage";
+import LevelsCommentsPage from "@/features/admin/pages/LevelsCommentsPage";
+import UserDictionaryPage from "@/features/admin/pages/UserDictionaryPage";
+import ProfilesPage from "@/features/admin/pages/ProfilesPage";
 import ProtectedRoute from "@/routes/ProtectedRoute";
+import AdminRoute from "@/routes/AdminRoute";
 import PublicRoute from "@/routes/PublicRoute";
 
 export const router = createBrowserRouter([
@@ -39,6 +49,54 @@ export const router = createBrowserRouter([
         index: true,
         element: <DashboardPage />,
       },
+    ],
+  },
+  {
+    path: "/profile",
+    element: (
+      <ProtectedRoute>
+        <MainLayout />
+      </ProtectedRoute>
+    ),
+    children: [
+      {
+        index: true,
+        element: <ProfilePage />,
+      },
+    ],
+  },
+  {
+    path: "/admin",
+    element: (
+      <AdminRoute>
+        <MainLayout />
+      </AdminRoute>
+    ),
+    children: [
+      {
+        index: true,
+        element: <AdminPage />,
+      },
+    ],
+  },
+  {
+    path: "/settings",
+    element: (
+      <AdminRoute>
+        <MainLayout />
+      </AdminRoute>
+    ),
+    children: [
+      { index: true, element: <SystemSetupPage /> },
+      { path: "system", element: <SystemSetupPage /> },
+      { path: "users", element: <UserManagementPage /> },
+      { path: "logged-in-users", element: <LoggedInUsersPage /> },
+      { path: "audit-trail", element: <AuditTrailPage /> },
+      { path: "levels-comments", element: <LevelsCommentsPage /> },
+      { path: "user-dictionary", element: <UserDictionaryPage /> },
+      { path: "profiles/text", element: <ProfilesPage type="text" /> },
+      { path: "profiles/graphics", element: <ProfilesPage type="graphics" /> },
+      { path: "profiles/barcode", element: <ProfilesPage type="barcode" /> },
     ],
   },
   {

@@ -27,7 +27,7 @@ import InspectionResults, {
 import { useUploadStore, type InspectionType } from "@/store/uploadStore";
 import { truncateFileName } from "@/shared/utils/truncateFileName";
 
-import { startTextInspection } from "@/shared/api/textInspectionApi";
+import { startInspection } from "@/shared/api/inspectionApi";
 
 import { useLoadingStatus } from "@/shared/hooks/useInspectionLoading";
 
@@ -89,13 +89,14 @@ export default function WorkspacePage() {
 
   const runInspection = useCallback(async () => {
     /*
-     * Only Text Inspection is currently connected
-     * to the Python backend.
+     * The inspection type comes from the URL parameter and is passed
+     * through to the backend via `inspection_type`, which dispatches
+     * to the correct pipeline.  Any registered inspection type
+     * (text, graphics, spelling, …) is supported here.
      */
     if (
       !masterFile ||
-      !sampleFile ||
-      inspectionType !== "text"
+      !sampleFile
     ) {
       return;
     }
@@ -112,7 +113,7 @@ export default function WorkspacePage() {
       const {
         sessionId,
         report,
-      } = await startTextInspection(
+      } = await startInspection(
         masterFile,
         sampleFile,
         {
@@ -159,7 +160,7 @@ export default function WorkspacePage() {
       const message =
         error instanceof Error
           ? error.message
-          : "Text inspection failed. Please try again.";
+          : "Inspection failed. Please try again.";
 
       setError(message);
 
@@ -168,7 +169,7 @@ export default function WorkspacePage() {
       setStatus(null);
 
       console.error(
-        "Text inspection error:",
+        "Inspection error:",
         error
       );
     }
@@ -308,12 +309,7 @@ export default function WorkspacePage() {
           `report-${inspectionReport.dpi}`,
 
         inspectionType:
-          (
-            inspectionType as
-              InspectionResult[
-                "inspectionType"
-              ]
-          ) ?? "text",
+          (inspectionType as InspectionType) ?? "text",
 
         masterFileName:
           masterFile.name,

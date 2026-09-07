@@ -9,3 +9,6 @@ rapidfuzz
 Pillow
 scipy
 pytesseract
+azure-cosmos
+azure-storage-blob
+azure-identity

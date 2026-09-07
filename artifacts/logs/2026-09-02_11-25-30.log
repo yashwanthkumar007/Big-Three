@@ -1,0 +1,222 @@
+[2026-09-02 11:25:36,343] 114 azure.identity._credentials.environment - INFO - No environment configuration found.
+[2026-09-02 11:25:36,357] 151 azure.identity._credentials.managed_identity - INFO - ManagedIdentityCredential will use IMDS
+[2026-09-02 11:25:36,903] 114 azure.identity._credentials.environment - INFO - No environment configuration found.
+[2026-09-02 11:25:36,903] 151 azure.identity._credentials.managed_identity - INFO - ManagedIdentityCredential will use IMDS
+[2026-09-02 11:25:36,908] 535 azure.core.pipeline.policies.http_logging_policy - INFO - Request URL: 'http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=REDACTED'
+Request method: 'GET'
+Request headers:
+    'User-Agent': 'azsdk-python-identity/1.25.3 Python/3.11.9 (Windows-10-10.0.26200-SP0)'
+No body was attached to the request
+[2026-09-02 11:26:21,500] 581 azure.core.pipeline.policies.http_logging_policy - INFO - Response status: 504
+Response headers:
+    'Server': 'Zscaler/6.2'
+    'Content-Type': 'text/html'
+    'Connection': 'close'
+[2026-09-02 11:26:21,532] 535 azure.core.pipeline.policies.http_logging_policy - INFO - Request URL: 'http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=REDACTED'
+Request method: 'GET'
+Request headers:
+    'Metadata': 'REDACTED'
+    'x-client-SKU': 'REDACTED'
+    'x-client-Ver': 'REDACTED'
+    'x-ms-client-request-id': '2d0f2181-e5c3-4ea0-a5eb-320c2f665570'
+    'User-Agent': 'azsdk-python-identity/1.25.3 Python/3.11.9 (Windows-10-10.0.26200-SP0)'
+No body was attached to the request
+[2026-09-02 11:27:06,320] 581 azure.core.pipeline.policies.http_logging_policy - INFO - Response status: 504
+Response headers:
+    'Server': 'Zscaler/6.2'
+    'Content-Type': 'text/html'
+    'Connection': 'close'
+[2026-09-02 11:27:06,322] 535 azure.core.pipeline.policies.http_logging_policy - INFO - Request URL: 'http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=REDACTED'
+Request method: 'GET'
+Request headers:
+    'Metadata': 'REDACTED'
+    'x-client-SKU': 'REDACTED'
+    'x-client-Ver': 'REDACTED'
+    'x-ms-client-request-id': '2d0f2181-e5c3-4ea0-a5eb-320c2f665570'
+    'User-Agent': 'azsdk-python-identity/1.25.3 Python/3.11.9 (Windows-10-10.0.26200-SP0)'
+No body was attached to the request
+[2026-09-02 11:27:51,022] 581 azure.core.pipeline.policies.http_logging_policy - INFO - Response status: 504
+Response headers:
+    'Server': 'Zscaler/6.2'
+    'Content-Type': 'text/html'
+    'Connection': 'close'
+[2026-09-02 11:27:52,624] 535 azure.core.pipeline.policies.http_logging_policy - INFO - Request URL: 'http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=REDACTED'
+Request method: 'GET'
+Request headers:
+    'Metadata': 'REDACTED'
+    'x-client-SKU': 'REDACTED'
+    'x-client-Ver': 'REDACTED'
+    'x-ms-client-request-id': '2d0f2181-e5c3-4ea0-a5eb-320c2f665570'
+    'User-Agent': 'azsdk-python-identity/1.25.3 Python/3.11.9 (Windows-10-10.0.26200-SP0)'
+No body was attached to the request
+[2026-09-02 11:28:37,160] 581 azure.core.pipeline.policies.http_logging_policy - INFO - Response status: 504
+Response headers:
+    'Server': 'Zscaler/6.2'
+    'Content-Type': 'text/html'
+    'Connection': 'close'
+[2026-09-02 11:28:40,370] 535 azure.core.pipeline.policies.http_logging_policy - INFO - Request URL: 'http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=REDACTED'
+Request method: 'GET'
+Request headers:
+    'Metadata': 'REDACTED'
+    'x-client-SKU': 'REDACTED'
+    'x-client-Ver': 'REDACTED'
+    'x-ms-client-request-id': '2d0f2181-e5c3-4ea0-a5eb-320c2f665570'
+    'User-Agent': 'azsdk-python-identity/1.25.3 Python/3.11.9 (Windows-10-10.0.26200-SP0)'
+No body was attached to the request
+[2026-09-02 11:29:25,015] 581 azure.core.pipeline.policies.http_logging_policy - INFO - Response status: 504
+Response headers:
+    'Server': 'Zscaler/6.2'
+    'Content-Type': 'text/html'
+    'Connection': 'close'
+[2026-09-02 11:29:31,418] 535 azure.core.pipeline.policies.http_logging_policy - INFO - Request URL: 'http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=REDACTED'
+Request method: 'GET'
+Request headers:
+    'Metadata': 'REDACTED'
+    'x-client-SKU': 'REDACTED'
+    'x-client-Ver': 'REDACTED'
+    'x-ms-client-request-id': '2d0f2181-e5c3-4ea0-a5eb-320c2f665570'
+    'User-Agent': 'azsdk-python-identity/1.25.3 Python/3.11.9 (Windows-10-10.0.26200-SP0)'
+No body was attached to the request
+[2026-09-02 11:30:15,968] 581 azure.core.pipeline.policies.http_logging_policy - INFO - Response status: 504
+Response headers:
+    'Server': 'Zscaler/6.2'
+    'Content-Type': 'text/html'
+    'Connection': 'close'
+[2026-09-02 11:30:28,769] 535 azure.core.pipeline.policies.http_logging_policy - INFO - Request URL: 'http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=REDACTED'
+Request method: 'GET'
+Request headers:
+    'Metadata': 'REDACTED'
+    'x-client-SKU': 'REDACTED'
+    'x-client-Ver': 'REDACTED'
+    'x-ms-client-request-id': '2d0f2181-e5c3-4ea0-a5eb-320c2f665570'
+    'User-Agent': 'azsdk-python-identity/1.25.3 Python/3.11.9 (Windows-10-10.0.26200-SP0)'
+No body was attached to the request
+[2026-09-02 11:31:13,344] 581 azure.core.pipeline.policies.http_logging_policy - INFO - Response status: 504
+Response headers:
+    'Server': 'Zscaler/6.2'
+    'Content-Type': 'text/html'
+    'Connection': 'close'
+[2026-09-02 11:31:17,288] 224 azure.identity._credentials.chained - WARNING - DefaultAzureCredential failed to retrieve a token from the included credentials.
+Attempted credentials:
+	EnvironmentCredential: EnvironmentCredential authentication unavailable. Environment variables are not fully configured.
+Visit https://aka.ms/azsdk/python/identity/environmentcredential/troubleshoot to troubleshoot this issue.
+	WorkloadIdentityCredential: WorkloadIdentityCredential authentication unavailable. The workload options are not fully configured. See the troubleshooting guide for more information: https://aka.ms/azsdk/python/identity/workloadidentitycredential/troubleshoot. Missing required arguments: 'tenant_id', 'client_id', 'token_file_path'.
+	ManagedIdentityCredential: ManagedIdentityCredential authentication unavailable.
+	SharedTokenCacheCredential: SharedTokenCacheCredential authentication unavailable. No accounts were found in the cache.
+	VisualStudioCodeCredential: VisualStudioCodeCredential requires the 'azure-identity-broker' package to be installed. You must also ensure you have the Azure Resources extension installed and have signed in to Azure via Visual Studio Code.
+	AzureCliCredential: Azure CLI not found on path
+	AzurePowerShellCredential: Az.Account module >= 2.2.0 is not installed
+	AzureDeveloperCliCredential: Azure Developer CLI could not be found. Please visit https://aka.ms/azure-dev for installation instructions and then,once installed, authenticate to your Azure account using 'azd auth login'.
+	BrokerCredential: InteractiveBrowserBrokerCredential unavailable. The 'azure-identity-broker' package is required to use brokered authentication.
+To mitigate this issue, please refer to the troubleshooting guidelines here at https://aka.ms/azsdk/python/identity/defaultazurecredential/troubleshoot.
+[2026-09-02 11:31:17,291] 114 azure.identity._credentials.environment - INFO - No environment configuration found.
+[2026-09-02 11:31:17,291] 151 azure.identity._credentials.managed_identity - INFO - ManagedIdentityCredential will use IMDS
+[2026-09-02 11:31:17,303] 114 azure.identity._credentials.environment - INFO - No environment configuration found.
+[2026-09-02 11:31:17,308] 151 azure.identity._credentials.managed_identity - INFO - ManagedIdentityCredential will use IMDS
+[2026-09-02 11:31:17,317] 535 azure.core.pipeline.policies.http_logging_policy - INFO - Request URL: 'http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=REDACTED'
+Request method: 'GET'
+Request headers:
+    'User-Agent': 'azsdk-python-identity/1.25.3 Python/3.11.9 (Windows-10-10.0.26200-SP0)'
+No body was attached to the request
+[2026-09-02 11:32:01,876] 581 azure.core.pipeline.policies.http_logging_policy - INFO - Response status: 504
+Response headers:
+    'Server': 'Zscaler/6.2'
+    'Content-Type': 'text/html'
+    'Connection': 'close'
+[2026-09-02 11:32:01,882] 535 azure.core.pipeline.policies.http_logging_policy - INFO - Request URL: 'http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=REDACTED'
+Request method: 'GET'
+Request headers:
+    'Metadata': 'REDACTED'
+    'x-client-SKU': 'REDACTED'
+    'x-client-Ver': 'REDACTED'
+    'x-ms-client-request-id': '8f6d8945-4171-4649-ae5e-16ec02c71708'
+    'User-Agent': 'azsdk-python-identity/1.25.3 Python/3.11.9 (Windows-10-10.0.26200-SP0)'
+No body was attached to the request
+[2026-09-02 11:32:46,431] 581 azure.core.pipeline.policies.http_logging_policy - INFO - Response status: 504
+Response headers:
+    'Server': 'Zscaler/6.2'
+    'Content-Type': 'text/html'
+    'Connection': 'close'
+[2026-09-02 11:32:46,433] 535 azure.core.pipeline.policies.http_logging_policy - INFO - Request URL: 'http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=REDACTED'
+Request method: 'GET'
+Request headers:
+    'Metadata': 'REDACTED'
+    'x-client-SKU': 'REDACTED'
+    'x-client-Ver': 'REDACTED'
+    'x-ms-client-request-id': '8f6d8945-4171-4649-ae5e-16ec02c71708'
+    'User-Agent': 'azsdk-python-identity/1.25.3 Python/3.11.9 (Windows-10-10.0.26200-SP0)'
+No body was attached to the request
+[2026-09-02 11:33:30,986] 581 azure.core.pipeline.policies.http_logging_policy - INFO - Response status: 504
+Response headers:
+    'Server': 'Zscaler/6.2'
+    'Content-Type': 'text/html'
+    'Connection': 'close'
+[2026-09-02 11:33:32,589] 535 azure.core.pipeline.policies.http_logging_policy - INFO - Request URL: 'http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=REDACTED'
+Request method: 'GET'
+Request headers:
+    'Metadata': 'REDACTED'
+    'x-client-SKU': 'REDACTED'
+    'x-client-Ver': 'REDACTED'
+    'x-ms-client-request-id': '8f6d8945-4171-4649-ae5e-16ec02c71708'
+    'User-Agent': 'azsdk-python-identity/1.25.3 Python/3.11.9 (Windows-10-10.0.26200-SP0)'
+No body was attached to the request
+[2026-09-02 11:34:17,126] 581 azure.core.pipeline.policies.http_logging_policy - INFO - Response status: 504
+Response headers:
+    'Server': 'Zscaler/6.2'
+    'Content-Type': 'text/html'
+    'Connection': 'close'
+[2026-09-02 11:34:20,328] 535 azure.core.pipeline.policies.http_logging_policy - INFO - Request URL: 'http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=REDACTED'
+Request method: 'GET'
+Request headers:
+    'Metadata': 'REDACTED'
+    'x-client-SKU': 'REDACTED'
+    'x-client-Ver': 'REDACTED'
+    'x-ms-client-request-id': '8f6d8945-4171-4649-ae5e-16ec02c71708'
+    'User-Agent': 'azsdk-python-identity/1.25.3 Python/3.11.9 (Windows-10-10.0.26200-SP0)'
+No body was attached to the request
+[2026-09-02 11:35:05,005] 581 azure.core.pipeline.policies.http_logging_policy - INFO - Response status: 504
+Response headers:
+    'Server': 'Zscaler/6.2'
+    'Content-Type': 'text/html'
+    'Connection': 'close'
+[2026-09-02 11:35:11,408] 535 azure.core.pipeline.policies.http_logging_policy - INFO - Request URL: 'http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=REDACTED'
+Request method: 'GET'
+Request headers:
+    'Metadata': 'REDACTED'
+    'x-client-SKU': 'REDACTED'
+    'x-client-Ver': 'REDACTED'
+    'x-ms-client-request-id': '8f6d8945-4171-4649-ae5e-16ec02c71708'
+    'User-Agent': 'azsdk-python-identity/1.25.3 Python/3.11.9 (Windows-10-10.0.26200-SP0)'
+No body was attached to the request
+[2026-09-02 11:35:55,984] 581 azure.core.pipeline.policies.http_logging_policy - INFO - Response status: 504
+Response headers:
+    'Server': 'Zscaler/6.2'
+    'Content-Type': 'text/html'
+    'Connection': 'close'
+[2026-09-02 11:36:08,789] 535 azure.core.pipeline.policies.http_logging_policy - INFO - Request URL: 'http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=REDACTED'
+Request method: 'GET'
+Request headers:
+    'Metadata': 'REDACTED'
+    'x-client-SKU': 'REDACTED'
+    'x-client-Ver': 'REDACTED'
+    'x-ms-client-request-id': '8f6d8945-4171-4649-ae5e-16ec02c71708'
+    'User-Agent': 'azsdk-python-identity/1.25.3 Python/3.11.9 (Windows-10-10.0.26200-SP0)'
+No body was attached to the request
+[2026-09-02 11:36:53,444] 581 azure.core.pipeline.policies.http_logging_policy - INFO - Response status: 504
+Response headers:
+    'Server': 'Zscaler/6.2'
+    'Content-Type': 'text/html'
+    'Connection': 'close'
+[2026-09-02 11:36:56,541] 224 azure.identity._credentials.chained - WARNING - DefaultAzureCredential failed to retrieve a token from the included credentials.
+Attempted credentials:
+	EnvironmentCredential: EnvironmentCredential authentication unavailable. Environment variables are not fully configured.
+Visit https://aka.ms/azsdk/python/identity/environmentcredential/troubleshoot to troubleshoot this issue.
+	WorkloadIdentityCredential: WorkloadIdentityCredential authentication unavailable. The workload options are not fully configured. See the troubleshooting guide for more information: https://aka.ms/azsdk/python/identity/workloadidentitycredential/troubleshoot. Missing required arguments: 'tenant_id', 'client_id', 'token_file_path'.
+	ManagedIdentityCredential: ManagedIdentityCredential authentication unavailable.
+	SharedTokenCacheCredential: SharedTokenCacheCredential authentication unavailable. No accounts were found in the cache.
+	VisualStudioCodeCredential: VisualStudioCodeCredential requires the 'azure-identity-broker' package to be installed. You must also ensure you have the Azure Resources extension installed and have signed in to Azure via Visual Studio Code.
+	AzureCliCredential: Azure CLI not found on path
+	AzurePowerShellCredential: Az.Account module >= 2.2.0 is not installed
+	AzureDeveloperCliCredential: Azure Developer CLI could not be found. Please visit https://aka.ms/azure-dev for installation instructions and then,once installed, authenticate to your Azure account using 'azd auth login'.
+	BrokerCredential: InteractiveBrowserBrokerCredential unavailable. The 'azure-identity-broker' package is required to use brokered authentication.
+To mitigate this issue, please refer to the troubleshooting guidelines here at https://aka.ms/azsdk/python/identity/defaultazurecredential/troubleshoot.

@@ -17,6 +17,7 @@ import DescriptionOutlinedIcon from "@mui/icons-material/DescriptionOutlined";
 import ExtensionOutlinedIcon from "@mui/icons-material/ExtensionOutlined";
 import SpellcheckOutlinedIcon from "@mui/icons-material/SpellcheckOutlined";
 import StickyNote2OutlinedIcon from "@mui/icons-material/StickyNote2Outlined";
+import SettingsOutlinedIcon from "@mui/icons-material/SettingsOutlined";
 import HelpOutlineOutlinedIcon from "@mui/icons-material/HelpOutlineOutlined";
 import LogoutOutlinedIcon from "@mui/icons-material/LogoutOutlined";
 
@@ -24,12 +25,14 @@ import BarcodeIcon from "./BarcodeIcon";
 import BrailleDotsIcon from "./BrailleDotsIcon";
 
 import OrganizationLogo from "@/assets/logos/icon.png";
-import { clearSession } from "@/shared/utils/auth";
+import { clearSession, isTenantAdmin } from "@/shared/utils/auth";
+import { logout as logoutServerSession } from "@/features/authentication/services/authservice";
 
 type User = {
   id: number;
   name: string;
   email: string;
+  accountType?: string;
 };
 
 export default function Header() {
@@ -55,6 +58,12 @@ export default function Header() {
 
     return "User";
   }, []);
+
+  // Only Tenant Admins see the Admin (gear) shortcut in the navbar.
+  // Re-evaluated on every render (route changes re-render via useLocation),
+  // so an account-type change (user → Administrator) shows the gear without
+  // needing a code reload.
+  const isAdmin = isTenantAdmin();
 
   const modules = [
     {
@@ -90,6 +99,9 @@ export default function Header() {
   ];
 
   const handleLogout = () => {
+    // Delete the server-side session record first (best-effort) so this
+    // login no longer appears under Logged-in Users, then clear locally.
+    void logoutServerSession();
     clearSession();
     navigate("/login");
   };
@@ -192,8 +204,8 @@ export default function Header() {
             {username.charAt(0).toUpperCase()}
           </Avatar>
 
-          {/* Profile */}
-          <Tooltip title="Profile">
+          {/* Profile — clicking navigates directly to profile page */}
+          <Tooltip title="My Profile">
             <Button
               onClick={() => navigate("/profile")}
               sx={{
@@ -221,6 +233,33 @@ export default function Header() {
               {username}
             </Button>
           </Tooltip>
+
+          {/* Admin (gear) shortcut — only visible to Tenant admin accounts,
+              shown after the admin name */}
+          {isAdmin && (
+            <Tooltip title="System Setup">
+              <IconButton
+                onClick={() => navigate("/settings/system")}
+                sx={{
+                  color: "white",
+                  borderRadius: 2,
+                  transition: "all .25s ease",
+
+                  bgcolor:
+                    location.pathname.startsWith("/settings") || location.pathname.startsWith("/admin")
+                      ? "#703E97"
+                      : "transparent",
+
+                  "&:hover": {
+                    bgcolor: "#703E97",
+                    transform: "translateY(-2px)"
+                  }
+                }}
+              >
+                <SettingsOutlinedIcon />
+              </IconButton>
+            </Tooltip>
+          )}
 
           {/* FAQ */}
           <Tooltip title="FAQ">
