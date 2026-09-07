@@ -45,7 +45,8 @@ import {
 import { BRAND_NAVY, fmtDate, fmtDateTime } from "../components/adminUtils";
 import { ConfirmDialog, DetailDialog, SnackBar, type Snack } from "../components/adminUi";
 
-const ACCOUNT_TYPES: AccountTypeOption[] = ["User", "Reviewer", "Administrator", "Tenant Admin"];
+/** Only two account types exist: "user" and "Administrator". */
+const ACCOUNT_TYPES: AccountTypeOption[] = ["user", "Administrator"];
 const STATUSES: UserStatus[] = ["Active", "Inactive", "Locked"];
 const COLUMNS = [
   "Username",
@@ -94,13 +95,13 @@ const CONFIRM_TEXT: Record<ConfirmKind, (name: string) => string> = {
 function UserFormDialog({
   open,
   user,
-  existingUsernames,
+  existingEmails,
   onClose,
   onSaved,
 }: {
   open: boolean;
   user: User | null;
-  existingUsernames: string[];
+  existingEmails: string[];
   onClose: () => void;
   onSaved: (message: string) => void;
 }) {
@@ -135,7 +136,7 @@ function UserFormDialog({
               email: "",
               firstName: "",
               lastName: "",
-              accountType: "User",
+              accountType: "user",
               company: "Viatris",
               accountStatus: "Active",
               password: "",
@@ -200,8 +201,6 @@ function UserFormDialog({
             control={control}
             rules={{
               required: "Username is required.",
-              validate: (value) =>
-                !!user || !existingUsernames.includes(value.trim()) || "Username already exists.",
             }}
             render={({ field }) => (
               <TextField
@@ -221,6 +220,11 @@ function UserFormDialog({
             rules={{
               required: "Email is required.",
               pattern: { value: /^[^\s@]+@[^\s@]+\.[^\s@]+$/, message: "Enter a valid email address." },
+              // Email is the unique identifier for a user account.
+              validate: (value) =>
+                !!user ||
+                !existingEmails.includes(value.trim().toLowerCase()) ||
+                "Email already registered.",
             }}
             render={({ field }) => (
               <TextField
@@ -404,7 +408,7 @@ export default function UserManagementPage() {
     };
   }, []);
 
-  const usernames = useMemo(() => (users ?? []).map((user) => user.username), [users]);
+  const emails = useMemo(() => (users ?? []).map((user) => user.email), [users]);
   const paged = useMemo(
     () => (users ?? []).slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage),
     [users, page, rowsPerPage]
@@ -595,7 +599,7 @@ export default function UserManagementPage() {
       <UserFormDialog
         open={formOpen}
         user={editUser}
-        existingUsernames={usernames}
+        existingEmails={emails}
         onClose={() => setFormOpen(false)}
         onSaved={(message) => {
           setSnack({ message, severity: "success" });

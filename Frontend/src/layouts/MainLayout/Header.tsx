@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import {
@@ -7,9 +7,6 @@ import {
   Box,
   Button,
   IconButton,
-  ListItemIcon,
-  Menu,
-  MenuItem,
   Stack,
   Toolbar,
   Tooltip,
@@ -23,14 +20,13 @@ import StickyNote2OutlinedIcon from "@mui/icons-material/StickyNote2Outlined";
 import SettingsOutlinedIcon from "@mui/icons-material/SettingsOutlined";
 import HelpOutlineOutlinedIcon from "@mui/icons-material/HelpOutlineOutlined";
 import LogoutOutlinedIcon from "@mui/icons-material/LogoutOutlined";
-import PersonOutlineOutlinedIcon from "@mui/icons-material/PersonOutlineOutlined";
-import TuneOutlinedIcon from "@mui/icons-material/TuneOutlined";
 
 import BarcodeIcon from "./BarcodeIcon";
 import BrailleDotsIcon from "./BrailleDotsIcon";
 
 import OrganizationLogo from "@/assets/logos/icon.png";
 import { clearSession, isTenantAdmin } from "@/shared/utils/auth";
+import { logout as logoutServerSession } from "@/features/authentication/services/authservice";
 
 type User = {
   id: number;
@@ -64,11 +60,10 @@ export default function Header() {
   }, []);
 
   // Only Tenant Admins see the Admin (gear) shortcut in the navbar.
-  const isAdmin = useMemo(() => isTenantAdmin(), []);
-
-  // Profile dropdown menu
-  const [profileMenuAnchor, setProfileMenuAnchor] = useState<HTMLElement | null>(null);
-  const closeProfileMenu = () => setProfileMenuAnchor(null);
+  // Re-evaluated on every render (route changes re-render via useLocation),
+  // so an account-type change (user → Administrator) shows the gear without
+  // needing a code reload.
+  const isAdmin = isTenantAdmin();
 
   const modules = [
     {
@@ -104,6 +99,9 @@ export default function Header() {
   ];
 
   const handleLogout = () => {
+    // Delete the server-side session record first (best-effort) so this
+    // login no longer appears under Logged-in Users, then clear locally.
+    void logoutServerSession();
     clearSession();
     navigate("/login");
   };
@@ -206,10 +204,10 @@ export default function Header() {
             {username.charAt(0).toUpperCase()}
           </Avatar>
 
-          {/* Profile — opens dropdown menu */}
-          <Tooltip title="Profile">
+          {/* Profile — clicking navigates directly to profile page */}
+          <Tooltip title="My Profile">
             <Button
-              onClick={(e) => setProfileMenuAnchor(e.currentTarget)}
+              onClick={() => navigate("/profile")}
               sx={{
                 color: "white",
                 textTransform: "none",
@@ -222,7 +220,7 @@ export default function Header() {
                 transition: "all .25s ease",
 
                 bgcolor:
-                  location.pathname === "/profile" || Boolean(profileMenuAnchor)
+                  location.pathname === "/profile"
                     ? "#703E97"
                     : "transparent",
 
@@ -235,62 +233,6 @@ export default function Header() {
               {username}
             </Button>
           </Tooltip>
-
-          <Menu
-            anchorEl={profileMenuAnchor}
-            open={Boolean(profileMenuAnchor)}
-            onClose={closeProfileMenu}
-            anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
-            transformOrigin={{ vertical: "top", horizontal: "right" }}
-            slotProps={{
-              paper: {
-                sx: {
-                  mt: 1,
-                  minWidth: 200,
-                  border: "1px solid #E0E0E6",
-                  boxShadow: "0 8px 24px rgba(42, 39, 110, 0.15)"
-                }
-              }
-            }}
-          >
-            <MenuItem
-              onClick={() => {
-                closeProfileMenu();
-                navigate("/profile");
-              }}
-            >
-              <ListItemIcon>
-                <PersonOutlineOutlinedIcon fontSize="small" sx={{ color: "#2A276E" }} />
-              </ListItemIcon>
-              My Profile
-            </MenuItem>
-
-            {isAdmin && (
-              <MenuItem
-                onClick={() => {
-                  closeProfileMenu();
-                  navigate("/settings/system");
-                }}
-              >
-                <ListItemIcon>
-                  <TuneOutlinedIcon fontSize="small" sx={{ color: "#2A276E" }} />
-                </ListItemIcon>
-                System Setup
-              </MenuItem>
-            )}
-
-            <MenuItem
-              onClick={() => {
-                closeProfileMenu();
-                handleLogout();
-              }}
-            >
-              <ListItemIcon>
-                <LogoutOutlinedIcon fontSize="small" sx={{ color: "#C62828" }} />
-              </ListItemIcon>
-              Logout
-            </MenuItem>
-          </Menu>
 
           {/* Admin (gear) shortcut — only visible to Tenant admin accounts,
               shown after the admin name */}

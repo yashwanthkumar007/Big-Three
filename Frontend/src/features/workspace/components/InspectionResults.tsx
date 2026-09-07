@@ -542,7 +542,9 @@ export default function InspectionResults({
     const session = getSession();
     let performedBy = "User";
 
-    if (session?.name) {
+    if (session?.username) {
+      performedBy = session.username;
+    } else if (session?.name) {
       performedBy = session.name;
     } else if (session?.email) {
       const emailUsername = session.email.split("@")[0];

@@ -13,8 +13,11 @@ export type AccountType = "Tenant admin" | "user" | string;
 type User = {
   id: number;
   name: string;
+  username?: string;
   email: string;
   accountType: AccountType;
+  sessionId?: string;
+  loginTime?: string;
 };
 
 export const setSession = (user: User, accessToken?: string) => {
@@ -58,6 +61,17 @@ export const getSession = (): User | null => {
   }
 };
 
+/**
+ * Returns the sessionId of the currently authenticated session, or null
+ * when there is no active session. The sessionId identifies the current
+ * login session so the UI can protect the "current session" from
+ * termination using a session-id comparison rather than email matching.
+ */
+export const getCurrentSessionId = (): string | null => {
+  const user = getSession();
+  return user?.sessionId ?? null;
+};
+
 export const isSessionValid = (): boolean => {
   const user = getSession();
 
@@ -86,10 +100,9 @@ export const isSessionValid = (): boolean => {
  * Returns the account type of the currently logged-in user, or null when
  * there is no active session (e.g. "Tenant admin" or "user").
  *
- * Backward compatibility: sessions stored before the `accountType` field
- * existed don't carry a type. In that case we fall back to recognising the
- * known admin account by email so previously-logged-in admins still see the
- * gear icon without needing to sign out/in again.
+ * Authorization is derived solely from the accountType field stored in
+ * the authenticated session. The email address is an identity/login
+ * identifier only and must NEVER be used to determine permissions.
  */
 export const getAccountType = (): AccountType | null => {
   const user = getSession();
@@ -98,24 +111,18 @@ export const getAccountType = (): AccountType | null => {
     return null;
   }
 
-  if (user.accountType) {
-    return user.accountType;
-  }
-
-  // Legacy session fallback — treat the known admin as a Tenant admin.
-  if (user.email === "admin@example.com") {
-    return "Tenant admin";
-  }
-
-  return null;
+  return user.accountType || null;
 };
 
 /**
- * True when the logged-in user has "Tenant admin" privileges. Used to
- * conditionally show admin-only UI (e.g. the gear icon / admin page).
+ * True when the logged-in user has administrator privileges ("Administrator",
+ * or the legacy "Tenant admin" type). Used to conditionally show admin-only
+ * UI (gear icon / admin pages). Read fresh on every call so an account-type
+ * change is reflected immediately.
  */
 export const isTenantAdmin = (): boolean => {
-  return getAccountType() === "Tenant admin";
+  const accountType = getAccountType();
+  return accountType === "Administrator" || accountType === "Tenant admin";
 };
 /* -------------------------------------------------------------------------- */
 /* CurrentUser model                                                           */
@@ -134,6 +141,7 @@ export type CurrentUser = {
   firstName: string;
   lastName: string;
   accountType: string;
+  sessionId?: string | null;
   company: string;
   accountStatus: "Active" | "Inactive" | "Locked";
   roles: Role[];
@@ -173,11 +181,12 @@ export function getCurrentUser(): CurrentUser | null {
   const permissions = ROLE_PERMISSIONS[role] ?? [];
   return {
     id: session.id,
-    username: session.email.split("@")[0],
+    username: session.username ?? session.email.split("@")[0],
     email: session.email,
     firstName: nameParts[0] ?? "",
     lastName: nameParts.slice(1).join(" "),
     accountType: getAccountType() ?? session.accountType ?? "",
+    sessionId: session.sessionId ?? null,
     company: "",
     accountStatus: "Active",
     roles: [role],

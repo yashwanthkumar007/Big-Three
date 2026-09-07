@@ -4,6 +4,7 @@ import { Button, TextField, Alert } from "@mui/material";
 import { useForm } from "react-hook-form";
 
 import { login } from "@/features/authentication/services/authservice";
+import { recordUserLogin } from "@/features/admin/systemApi";
 import { setSession } from "@/shared/utils/auth";
 
 type LoginFormData = {
@@ -31,6 +32,8 @@ export default function LoginForm() {
       console.log(response);
       // Store user data in localStorage with session expiry
       setSession(response.user, response.accessToken);
+      // Record the login time so it shows up in User Management
+      await recordUserLogin(response.user.email);
       // Navigate to dashboard on successful login
       navigate("/dashboard");
     } catch (err) {

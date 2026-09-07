@@ -1,11 +1,10 @@
-﻿import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Alert,
   Box,
   Card,
   CardContent,
-  Chip,
   CircularProgress,
   Typography,
 } from "@mui/material";
@@ -105,32 +104,14 @@ export default function SystemSetupPage() {
       .catch((err: Error) => setError(err.message));
   }, []);
 
-  const licenseChip = useMemo(() => {
-    if (!info) return null;
-    if (info.licenseType === "ACTIVE") {
-      const expiry = new Date(info.licenseExpiry);
-      const daysLeft = Math.ceil((expiry.getTime() - Date.now()) / 86400000);
-      if (daysLeft < 0) {
-        return <Chip size="small" color="error" label="EXPIRED" sx={{ fontWeight: 700 }} />;
-      }
-      if (daysLeft <= 30) {
-        return <Chip size="small" color="warning" label={"EXPIRING SOON (" + daysLeft + "d)"} sx={{ fontWeight: 700 }} />;
-      }
-      return <Chip size="small" color="success" label="ACTIVE" sx={{ fontWeight: 700 }} />;
-    }
-    return <Chip size="small" color="error" label={info.licenseType.toUpperCase()} sx={{ fontWeight: 700 }} />;
-  }, [info]);
-
   const infoRows = info
     ? ([
         ["Application Version:", info.applicationVersion],
-        ["SDK Version:", info.sdkVersion],
         ["Company Name:", info.companyName],
-        ["License Type:", ""],
-        ["Number of Users:", String(info.userLimit)],
-        ["License Expiry:", new Date(info.licenseExpiry).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })],
+        ["License Type:", info.licenseType],
+        ["Number of Users:", String(info.numberOfUsers)],
         ["SSO Enabled:", info.ssoEnabled ? "Yes" : "No"],
-        ["REST API Authentication Type:", info.restApiAuthenticationType],
+        ["REST API Authentication:", info.restApiAuthenticationType],
       ] as Array<[string, string]>)
     : [];
 
@@ -157,13 +138,15 @@ export default function SystemSetupPage() {
                 </Box>
               ) : (
                 infoRows.map(([label, value]) => (
-                  <Box key={label} sx={{ display: "flex", py: 0.75 }}>
+                  <Box key={label} sx={{ display: "flex", alignItems: "center", py: 0.75 }}>
                     <Typography variant="body2" sx={{ width: 240, color: "#6B7280" }}>
                       {label}
                     </Typography>
-                    <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                      {label === "License Type:" ? licenseChip : value}
-                    </Typography>
+                    <Box sx={{ flex: 1 }}>
+                      <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                        {value}
+                      </Typography>
+                    </Box>
                   </Box>
                 ))
               )}
@@ -178,13 +161,13 @@ export default function SystemSetupPage() {
               title="User Management"
               description="Add, edit, disable and delete users"
               icon={<GroupOutlinedIcon />}
-              onClick={() => navigate("/admin/settings/users")}
+              onClick={() => navigate("/settings/users")}
             />
             <AdminNavItem
               title="Logged-in Users"
               description="View and terminate active sessions"
               icon={<PersonSearchOutlinedIcon />}
-              onClick={() => navigate("/admin/settings/logged-in-users")}
+              onClick={() => navigate("/settings/logged-in-users")}
             />
           </Box>
 
@@ -194,7 +177,7 @@ export default function SystemSetupPage() {
               title="View Audit Trail"
               description="Immutable record of all actions"
               icon={<HistoryOutlinedIcon />}
-              onClick={() => navigate("/admin/settings/audit-trail")}
+              onClick={() => navigate("/settings/audit-trail")}
             />
           </Box>
 
@@ -204,13 +187,13 @@ export default function SystemSetupPage() {
               title="Setup Levels and Comments"
               description="Inspection severity levels and reviewer comments"
               icon={<CommentOutlinedIcon />}
-              onClick={() => navigate("/admin/settings/levels-comments")}
+              onClick={() => navigate("/settings/levels-comments")}
             />
             <AdminNavItem
               title="Setup User Dictionary"
               description="Custom words ignored by spelling inspection"
               icon={<MenuBookOutlinedIcon />}
-              onClick={() => navigate("/admin/settings/user-dictionary")}
+              onClick={() => navigate("/settings/user-dictionary")}
             />
           </Box>
 
@@ -220,19 +203,19 @@ export default function SystemSetupPage() {
               title="Custom Text Profiles"
               description="Text inspection configuration"
               icon={<TextFieldsOutlinedIcon />}
-              onClick={() => navigate("/admin/settings/profiles/text")}
+              onClick={() => navigate("/settings/profiles/text")}
             />
             <AdminNavItem
               title="Custom Graphics Profiles"
               description="Graphics inspection configuration"
               icon={<ImageOutlinedIcon />}
-              onClick={() => navigate("/admin/settings/profiles/graphics")}
+              onClick={() => navigate("/settings/profiles/graphics")}
             />
             <AdminNavItem
               title="Custom Barcode Profiles"
               description="Barcode inspection configuration"
               icon={<QrCode2OutlinedIcon />}
-              onClick={() => navigate("/admin/settings/profiles/barcode")}
+              onClick={() => navigate("/settings/profiles/barcode")}
             />
           </Box>
         </Box>

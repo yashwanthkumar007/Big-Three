@@ -1,6 +1,14 @@
+/* eslint-disable preserve-caught-error -- mock API layer intentionally replaces network errors with user-facing messages */
 import axios from "axios";
 
-import { getAccessToken } from "@/shared/utils/auth";
+import {
+  createResource,
+  deleteResource,
+  getResource,
+  listResources,
+  updateResource,
+} from "@/shared/api/backendCrudApi";
+import { getAccessToken, getSession } from "@/shared/utils/auth";
 
 const API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL ?? "");
 
@@ -11,13 +19,29 @@ api.interceptors.request.use((config) => {
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
+  // Authenticated identity + current session id for admin/session endpoints.
+  // The backend resolves the accountType from its own database — these headers
+  // identify WHO is calling, they never grant permissions by themselves.
+  const session = getSession();
+  if (session?.email) {
+    config.headers["X-User-Email"] = session.email;
+  }
+  if (session?.sessionId) {
+    config.headers["X-Session-Id"] = session.sessionId;
+  }
   return config;
 });
 
-/** True when the backend endpoint isn't implemented yet (offline/404/405). */
+/**
+ * True when the real admin backend doesn't serve the endpoint yet, so the
+ * UI should fall back to its in-memory mock data. We treat ANY failure
+ * (offline, 400/404/405, 5xx, etc.) as "backend not implemented"
+ * because the deployed APIM/backend does not expose the admin/settings routes;
+ * once a real admin backend is added it returns 2xx and its real data is used.
+ */
 function isBackendUnavailable(error: unknown): boolean {
   if (axios.isAxiosError(error)) {
-    return !error.response || error.response.status === 404 || error.response.status === 405;
+    return !error.response || error.response.status >= 400;
   }
   return false;
 }
@@ -42,17 +66,15 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export type SystemInformation = {
   applicationVersion: string;
-  sdkVersion: string;
   companyName: string;
-  licenseType: "ACTIVE" | "EXPIRED" | "EXPIRING";
-  userLimit: number;
-  licenseExpiry: string;
+  licenseType: string;
+  numberOfUsers: number;
   ssoEnabled: boolean;
   restApiAuthenticationType: string;
 };
 
 export type UserStatus = "Active" | "Inactive" | "Locked";
-export type AccountTypeOption = "User" | "Reviewer" | "Administrator" | "Tenant Admin";
+export type AccountTypeOption = "user" | "Administrator";
 
 export type User = {
   id: string;
@@ -96,6 +118,8 @@ export type LoggedInUser = {
   id: string;
   user: string;
   email: string;
+  accountType: string;
+  sessionId?: string | null;
   loginTime: string;
   lastActivity: string;
   ipAddress: string;
@@ -168,26 +192,19 @@ export type InspectionProfile = {
 /* ------------------------ Mock data (backend fallback) ------------------------ */
 
 const MOCK_INFO: SystemInformation = {
-  applicationVersion: "4.2.0",
-  sdkVersion: "5.13.0",
+  applicationVersion: "1.0.0",
   companyName: "Viatris",
-  licenseType: "ACTIVE",
-  userLimit: 20,
-  licenseExpiry: "2026-10-15",
+  licenseType: "INTERNAL",
+  numberOfUsers: 0,
   ssoEnabled: false,
   restApiAuthenticationType: "TOKEN",
 };
 
 const MOCK_USERS: User[] = [
-  { id: "u1", username: "tejaswini.vangimalla", email: "tejaswini.vangimalla@viatris.com", firstName: "Tejaswini", lastName: "Vangimalla", accountType: "Tenant Admin", accountStatus: "Active", company: "Viatris", lastLogin: "2026-08-30T09:12:00Z", passwordExpiry: "2026-10-19T06:20:52Z", createdAt: "2026-07-17T09:22:29Z", emailNotificationEnabled: true },
-  { id: "u2", username: "admin", email: "admin@example.com", firstName: "System", lastName: "Administrator", accountType: "Administrator", accountStatus: "Active", company: "Viatris", lastLogin: "2026-08-31T14:05:00Z", passwordExpiry: "2026-11-01T00:00:00Z", createdAt: "2026-06-01T08:00:00Z", emailNotificationEnabled: false },
-  { id: "u3", username: "ravi.kumar", email: "ravi.kumar@viatris.com", firstName: "Ravi", lastName: "Kumar", accountType: "Reviewer", accountStatus: "Active", company: "Viatris", lastLogin: "2026-08-29T11:40:00Z", passwordExpiry: "2026-09-30T00:00:00Z", createdAt: "2026-07-02T10:15:00Z", emailNotificationEnabled: true },
-  { id: "u4", username: "priya.sharma", email: "priya.sharma@viatris.com", firstName: "Priya", lastName: "Sharma", accountType: "User", accountStatus: "Inactive", company: "Viatris", lastLogin: "2026-08-10T16:22:00Z", passwordExpiry: "2026-10-05T00:00:00Z", createdAt: "2026-07-20T12:00:00Z", emailNotificationEnabled: false },
-];
-
-const MOCK_SESSIONS: LoggedInUser[] = [
-  { id: "s1", user: "Tejaswini Vangimalla", email: "tejaswini.vangimalla@viatris.com", loginTime: "2026-09-01T08:30:00Z", lastActivity: "2026-09-01T09:45:00Z", ipAddress: "10.20.30.41", browser: "Chrome 128", operatingSystem: "Windows 11", sessionStatus: "Active" },
-  { id: "s2", user: "Ravi Kumar", email: "ravi.kumar@viatris.com", loginTime: "2026-09-01T07:55:00Z", lastActivity: "2026-09-01T09:10:00Z", ipAddress: "10.20.30.52", browser: "Edge 127", operatingSystem: "Windows 10", sessionStatus: "Idle" },
+  { id: "u1", username: "tejaswini.vangimalla", email: "tejaswini.vangimalla@viatris.com", firstName: "Tejaswini", lastName: "Vangimalla", accountType: "Administrator", accountStatus: "Active", company: "Viatris", lastLogin: "2026-08-30T09:12:00Z", passwordExpiry: "2026-10-19T06:20:52Z", createdAt: "2026-07-17T09:22:29Z", emailNotificationEnabled: true },
+  { id: "u2", username: "admin", email: "admin@viatris.com", firstName: "Admin", lastName: "User", accountType: "Administrator", accountStatus: "Active", company: "Viatris", lastLogin: "2026-08-31T14:05:00Z", passwordExpiry: "2026-11-01T00:00:00Z", createdAt: "2026-06-01T08:00:00Z", emailNotificationEnabled: false },
+  { id: "u3", username: "ravi.kumar", email: "ravi.kumar@viatris.com", firstName: "Ravi", lastName: "Kumar", accountType: "user", accountStatus: "Active", company: "Viatris", lastLogin: "2026-08-29T11:40:00Z", passwordExpiry: "2026-09-30T00:00:00Z", createdAt: "2026-07-02T10:15:00Z", emailNotificationEnabled: true },
+  { id: "u4", username: "priya.sharma", email: "priya.sharma@viatris.com", firstName: "Priya", lastName: "Sharma", accountType: "user", accountStatus: "Inactive", company: "Viatris", lastLogin: "2026-08-10T16:22:00Z", passwordExpiry: "2026-10-05T00:00:00Z", createdAt: "2026-07-20T12:00:00Z", emailNotificationEnabled: false },
 ];
 
 const MOCK_LOGS: AuditLog[] = [
@@ -227,7 +244,9 @@ const MOCK_PROFILES: Record<ProfileType, InspectionProfile[]> = {
   barcode: [],
 };
 
-let mockUsers = [...MOCK_USERS];
+/* Fallback mock users used ONLY when the backend is completely unavailable.
+   In normal operation, users are stored in and fetched from Cosmos DB via the backend API. */
+let mockUsers: User[] = [...MOCK_USERS];
 const mockLevels = [...MOCK_LEVELS];
 const mockComments = [...MOCK_COMMENTS];
 const mockDictionary = [...MOCK_DICTIONARY];
@@ -260,21 +279,40 @@ export async function getSystemInformation(): Promise<SystemInformation> {
 
 export async function getUsers(): Promise<User[]> {
   try {
-    const res = await api.get<User[]>("/api/users");
-    return res.data;
+    // Fetch users from Cosmos DB via the backend API
+    const backendUsers = await listResources<User>("users");
+    return backendUsers;
   } catch (error) {
     if (isBackendUnavailable(error)) {
       await delay(200);
+      // Backend unavailable -> return fallback mock users
       return [...mockUsers];
     }
     throw new Error(getErrorMessage(error));
   }
 }
 
+/**
+ * Records a login event for the user with the given email.
+ * The backend /api/auth/login endpoint already updates lastLogin in Cosmos DB,
+ * so this function is a no-op for Cosmos DB updates. It only updates the
+ * in-memory mock users array (fallback for offline mode) so that the UI stays
+ * consistent without making a redundant and potentially destructive API call.
+ */
+export async function recordUserLogin(email: string): Promise<void> {
+  const normalizedEmail = email.trim().toLowerCase();
+  const now = new Date().toISOString();
+
+  // Update in-memory mock users array (fallback for offline mode)
+  const userIndex = mockUsers.findIndex((u) => u.email.trim().toLowerCase() === normalizedEmail);
+  if (userIndex !== -1) {
+    mockUsers[userIndex] = { ...mockUsers[userIndex], lastLogin: now };
+  }
+}
+
 export async function getUser(id: string): Promise<User> {
   try {
-    const res = await api.get<User>(`/api/users/${id}`);
-    return res.data;
+    return await getResource<User>("users", id);
   } catch (error) {
     if (isBackendUnavailable(error)) {
       const found = mockUsers.find((u) => u.id === id);
@@ -285,15 +323,33 @@ export async function getUser(id: string): Promise<User> {
 }
 
 export async function createUser(data: CreateUserData): Promise<User> {
+  // Email is the unique identifier for a user account — check for duplicates
+  // (across both backend and locally-created users) BEFORE creating.
+  let existing: User[];
   try {
-    const res = await api.post<User>("/api/users", data);
-    return res.data;
+    existing = await getUsers();
+  } catch {
+    existing = [...mockUsers];
+  }
+  if (existing.some((u) => u.email.trim().toLowerCase() === data.email.trim().toLowerCase())) {
+    throw makeApiError(
+      new Error(`Email "${data.email}" already registered.`),
+      `Email "${data.email}" already registered.`
+    );
+  }
+
+  const payload = {
+    ...data,
+    createdAt: new Date().toISOString(),
+    emailNotificationEnabled: data.emailNotificationEnabled ?? true,
+  };
+
+  let user: User;
+  try {
+    user = await createResource<User>("users", payload);
   } catch (error) {
     if (isBackendUnavailable(error)) {
-      if (mockUsers.some((u) => u.username.toLowerCase() === data.username.toLowerCase())) {
-        throw makeApiError(new Error(`Username "${data.username}" already exists.`), `Username "${data.username}" already exists.`);
-      }
-      const user: User = {
+      user = {
         id: uid(),
         username: data.username,
         email: data.email,
@@ -308,30 +364,45 @@ export async function createUser(data: CreateUserData): Promise<User> {
         emailNotificationEnabled: data.emailNotificationEnabled ?? true,
       };
       mockUsers = [user, ...mockUsers];
-      return user;
+    } else {
+      throw new Error(getErrorMessage(error));
     }
-    throw new Error(getErrorMessage(error));
   }
+
+  return user;
 }
 
 export async function updateUser(id: string, data: UpdateUserData): Promise<User> {
+  let updated: User;
+
   try {
-    const res = await api.put<User>(`/api/users/${id}`, data);
-    return res.data;
+    updated = await updateResource<User>("users", id, data);
   } catch (error) {
     if (isBackendUnavailable(error)) {
       const index = mockUsers.findIndex((u) => u.id === id);
       if (index === -1) throw makeApiError(new Error("User not found."), "User not found.");
       mockUsers[index] = { ...mockUsers[index], ...data };
-      return mockUsers[index];
+      updated = mockUsers[index];
+    } else {
+      throw new Error(getErrorMessage(error));
     }
-    throw new Error(getErrorMessage(error));
   }
+
+  // Keep the in-memory mock users array in sync for fallback mode
+  const key = updated.email.trim().toLowerCase();
+  const mockIndex = mockUsers.findIndex((u) => u.email.trim().toLowerCase() === key);
+  if (mockIndex !== -1) {
+    mockUsers[mockIndex] = { ...mockUsers[mockIndex], ...data, id: mockUsers[mockIndex].id };
+    updated = mockUsers[mockIndex];
+  }
+
+  return updated;
 }
+
 
 export async function deleteUser(id: string): Promise<void> {
   try {
-    await api.delete(`/api/users/${id}`);
+    await deleteResource("users", id);
   } catch (error) {
     if (isBackendUnavailable(error)) {
       mockUsers = mockUsers.filter((u) => u.id !== id);
@@ -343,7 +414,7 @@ export async function deleteUser(id: string): Promise<void> {
 
 export async function disableUser(id: string): Promise<void> {
   try {
-    await api.patch(`/api/users/${id}/disable`);
+    await updateResource<User>("users", id, { accountStatus: "Inactive" });
   } catch (error) {
     if (isBackendUnavailable(error)) {
       const index = mockUsers.findIndex((u) => u.id === id);
@@ -358,7 +429,7 @@ export async function disableUser(id: string): Promise<void> {
 
 export async function enableUser(id: string): Promise<void> {
   try {
-    await api.patch(`/api/users/${id}/enable`);
+    await updateResource<User>("users", id, { accountStatus: "Active" });
   } catch (error) {
     if (isBackendUnavailable(error)) {
       const index = mockUsers.findIndex((u) => u.id === id);
@@ -392,6 +463,38 @@ export async function generateRestApiToken(id: string): Promise<string> {
 
 /* ---------- Logged-in users / sessions ---------- */
 
+/** Builds a session entry for the currently authenticated session (fallback). */
+function currentUserSession(): LoggedInUser | null {
+  const session = getSession();
+  if (!session) return null;
+
+  const sessionId = session.sessionId ?? null;
+  // A reachable backend supplies the authenticated session id. If the local
+  // session predates sessionId (no active login restoring it), fall back to a
+  // deterministic value so the current session can still be identified.
+  const id = sessionId ?? `sess_${String(session.id)}`;
+
+  // Best-effort device info for the offline fallback only — the real values
+  // (IP/browser/OS) come from the backend session registry when reachable.
+  const ua = navigator.userAgent;
+  const browser = /Edg\//.test(ua) ? "Edge" : /Chrome\//.test(ua) ? "Chrome" : /Firefox\//.test(ua) ? "Firefox" : /Safari\//.test(ua) ? "Safari" : "Unknown Browser";
+  const operatingSystem = /Windows/.test(ua) ? "Windows" : /Android/.test(ua) ? "Android" : /iPhone|iPad|iPod/.test(ua) ? "iOS" : /Mac OS X|Macintosh/.test(ua) ? "macOS" : /Linux/.test(ua) ? "Linux" : "Unknown OS";
+
+  return {
+    id,
+    user: session.name || session.email,
+    email: session.email,
+    accountType: session.accountType ?? "user",
+    sessionId,
+    loginTime: session.loginTime ?? new Date().toISOString(),
+    lastActivity: new Date().toISOString(),
+    ipAddress: "—",
+    browser,
+    operatingSystem,
+    sessionStatus: "Active",
+  };
+}
+
 export async function getLoggedInUsers(): Promise<LoggedInUser[]> {
   try {
     const res = await api.get<LoggedInUser[]>("/api/sessions");
@@ -399,12 +502,18 @@ export async function getLoggedInUsers(): Promise<LoggedInUser[]> {
   } catch (error) {
     if (isBackendUnavailable(error)) {
       await delay(200);
-      return [...MOCK_SESSIONS];
+      // Backend unavailable -> report only the currently authenticated session. No
+      // fabricated/hardcoded sessions (e.g. mock users) are ever added. A real
+      // backend (/api/auth/me + /api/sessions) is the single source of truth.
+
+
+
+      const current = currentUserSession();
+      return current ? [current] : [];
     }
     throw new Error(getErrorMessage(error));
   }
 }
-
 export async function terminateSession(id: string): Promise<void> {
   try {
     await api.delete(`/api/sessions/${id}`);

@@ -15,11 +15,10 @@ import {
   Typography,
 } from "@mui/material";
 import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
-import LogoutOutlinedIcon from "@mui/icons-material/LogoutOutlined";
 
-import { getLoggedInUsers, terminateSession, type LoggedInUser } from "../systemApi";
+import { getLoggedInUsers, type LoggedInUser } from "../systemApi";
 import { BRAND_NAVY, fmtDateTime } from "../components/adminUtils";
-import { ConfirmDialog, DetailDialog, SnackBar, type Snack } from "../components/adminUi";
+import { DetailDialog, SnackBar, type Snack } from "../components/adminUi";
 
 const COLUMNS = ["User", "Email", "Login Time", "Last Activity", "IP Address", "Browser", "Operating System", "Session Status", "Actions"];
 
@@ -27,8 +26,6 @@ export default function LoggedInUsersPage() {
   const [sessions, setSessions] = useState<LoggedInUser[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [viewUser, setViewUser] = useState<LoggedInUser | null>(null);
-  const [terminating, setTerminating] = useState<LoggedInUser | null>(null);
-  const [busy, setBusy] = useState(false);
   const [snack, setSnack] = useState<Snack>(null);
 
   const load = () => {
@@ -38,21 +35,6 @@ export default function LoggedInUsersPage() {
   };
 
   useEffect(load, []);
-
-  const doTerminate = async () => {
-    if (!terminating) return;
-    setBusy(true);
-    try {
-      await terminateSession(terminating.id);
-      setSnack({ message: `Session for "${terminating.user}" terminated.`, severity: "success" });
-      setTerminating(null);
-      load();
-    } catch (err) {
-      setSnack({ message: err instanceof Error ? err.message : "Failed to terminate session.", severity: "error" });
-    } finally {
-      setBusy(false);
-    }
-  };
 
   const detailRows = viewUser
     ? ([
@@ -127,11 +109,6 @@ export default function LoggedInUsersPage() {
                         <VisibilityOutlinedIcon fontSize="small" />
                       </IconButton>
                     </Tooltip>
-                    <Tooltip title="Terminate Session">
-                      <IconButton size="small" color="error" onClick={() => setTerminating(s)}>
-                        <LogoutOutlinedIcon fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
                   </TableCell>
                 </TableRow>
               ))
@@ -141,17 +118,6 @@ export default function LoggedInUsersPage() {
       </TableContainer>
 
       <DetailDialog open={Boolean(viewUser)} title="Session Details" rows={detailRows} onClose={() => setViewUser(null)} />
-
-      <ConfirmDialog
-        open={Boolean(terminating)}
-        title="Terminate Session"
-        message={`Terminate the session for "${terminating?.user}"? The user will be logged out immediately.`}
-        confirmLabel="Terminate"
-        confirmColor="error"
-        busy={busy}
-        onClose={() => setTerminating(null)}
-        onConfirm={doTerminate}
-      />
 
       <SnackBar snack={snack} onClose={() => setSnack(null)} />
     </Box>

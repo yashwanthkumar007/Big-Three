@@ -67,7 +67,11 @@ function isBackendUnavailable(error: unknown): boolean {
     return (
       !error.response ||
       error.response.status === 404 ||
-      error.response.status === 405
+      error.response.status === 405 ||
+      error.response.status === 501 ||
+      error.response.status === 502 ||
+      error.response.status === 503 ||
+      error.response.status === 504
     );
   }
   return false;
@@ -93,11 +97,12 @@ export function getApiErrorMessage(error: unknown): string {
 /* Local mock persistence (used only when the backend is unreachable)          */
 /* -------------------------------------------------------------------------- */
 
-const PROFILE_CACHE_KEY = "medinspect.profile";
+/* Profile helpers                                                             */
+/* -------------------------------------------------------------------------- */
+
 const API_TOKENS_KEY = "medinspect.apiTokens";
 
-function deriveCompany(email: string): string {
-  const domain = email.split("@")[1];
+function deriveCompany(email: string): string {  const domain = email.split("@")[1];
   if (!domain) return "";
   const first = domain.split(".")[0];
   return first.charAt(0).toUpperCase() + first.slice(1);
@@ -113,12 +118,18 @@ function deriveNames(name: string): { firstName: string; lastName: string } {
 
 /**
  * Builds a profile from the authenticated session user (never hardcoded).
- * Used as a local fallback when the backend has no `/api/users/me` route.
+ * Used as a fallback when the backend is unreachable.
  */
 function buildFallbackProfile(): UserProfile {
   const session = getSession();
   const email = session?.email ?? "";
+
   const { firstName, lastName } = deriveNames(session?.name ?? "");
+
+  // Authorization is derived from the accountType stored in the
+  // authenticated session — never from the email address, which is an
+  // identity/login identifier only.
+  const accountType = session?.accountType ?? "user";
 
   return {
     id: session ? String(session.id) : "",
@@ -126,9 +137,9 @@ function buildFallbackProfile(): UserProfile {
     firstName,
     lastName,
     accountExpiry: null,
-    passwordExpiry: "2026-10-19T06:20:52",
-    createdAt: "2026-07-17T09:22:29",
-    accountType: "Tenant admin",
+    passwordExpiry: null,
+    createdAt: new Date().toISOString(),
+    accountType,
     accountStatus: "Active",
     company: deriveCompany(email),
     emailNotificationsEnabled: true,
@@ -172,23 +183,24 @@ function writeLocal(key: string, value: unknown) {
 /* Profile                                                                     */
 /* -------------------------------------------------------------------------- */
 
-/** GET /api/users/me — returns the authenticated user's profile. */
+/** GET /api/users/me — returns the authenticated user's profile from Cosmos DB. */
 export async function fetchMyProfile(): Promise<UserProfile> {
+  const session = getSession();
+  const userEmail = session?.email ?? "";
+
   try {
-    const { data } = await api.get<UserProfile>("/api/users/me");
+    const { data } = await api.get<UserProfile>("/api/users/me", {
+      headers: {
+        "X-User-Email": userEmail,
+      },
+    });
     const profile = normalizeProfile(data);
-    writeLocal(PROFILE_CACHE_KEY, profile);
     return profile;
   } catch (error) {
-    if (!isBackendUnavailable(error)) throw error;
-
-    // Backend unavailable -> use a cached/local session-derived profile.
-    const cached = readLocal<Partial<UserProfile> | null>(
-      PROFILE_CACHE_KEY,
-      null
-    );
-    const profile = normalizeProfile(cached ?? {});
-    writeLocal(PROFILE_CACHE_KEY, profile);
+    // Backend unavailable (404, 405, 5xx, network error, CORS, etc.) OR
+    // any other error -> fall back to session-derived profile so the
+    // UI always shows data. Never block the profile page on a backend call.
+    const profile = normalizeProfile({});
     return profile;
   }
 }
@@ -202,8 +214,19 @@ export async function changePassword(
   newPassword: string,
   confirmPassword: string
 ): Promise<void> {
+  const session = getSession();
+  const userEmail = session?.email ?? "";
+
   try {
-    await api.put("/api/users/me/password", { newPassword, confirmPassword });
+    await api.put(
+      "/api/users/me/password",
+      { newPassword, confirmPassword },
+      {
+        headers: {
+          "X-User-Email": userEmail,
+        },
+      }
+    );
   } catch (error) {
     if (!isBackendUnavailable(error)) throw error;
 
@@ -220,32 +243,24 @@ export async function changePassword(
 export async function updatePreferences(
   payload: { emailNotificationsEnabled: boolean }
 ): Promise<{ emailNotificationsEnabled: boolean }> {
+  const session = getSession();
+  const userEmail = session?.email ?? "";
+
   try {
     const { data } = await api.put<{ emailNotificationsEnabled: boolean }>(
       "/api/users/me/preferences",
-      payload
+      payload,
+      {
+        headers: {
+          "X-User-Email": userEmail,
+        },
+      }
     );
-    const cached = readLocal<Partial<UserProfile> | null>(
-      PROFILE_CACHE_KEY,
-      null
-    );
-    writeLocal(PROFILE_CACHE_KEY, {
-      ...(cached ?? {}),
-      emailNotificationsEnabled: data.emailNotificationsEnabled,
-    });
     return data;
   } catch (error) {
     if (!isBackendUnavailable(error)) throw error;
 
-    // Backend unavailable -> apply locally so the toggle persists in the demo.
-    const cached = readLocal<Partial<UserProfile> | null>(
-      PROFILE_CACHE_KEY,
-      null
-    );
-    writeLocal(PROFILE_CACHE_KEY, {
-      ...(cached ?? {}),
-      emailNotificationsEnabled: payload.emailNotificationsEnabled,
-    });
+    // Backend unavailable -> return the payload as if it was saved.
     return payload;
   }
 }
