@@ -32,70 +32,66 @@ from src.email_service import send_inspection_report_email
 from src.azure_service import (
     cosmos_delete_document,
     cosmos_get_document,
+
     cosmos_query_documents,
     cosmos_upsert_document,
+    delete_blob,
     download_blob,
     get_backend_infrastructure_status,
     upload_blob,
 )
 from src.logger import logger
+from src.password_utils import hash_password, is_password_hashed, verify_password
 from src.resource_schema import normalize_resource_payload, validate_resource_payload
+from src.audit_service import log_from_authenticated_user, AUDIT_LOGS_CONTAINER
+from src.setup_config_service import get_setup_config, update_setup_config
+from src.difference_comment_service import (
+    get_difference_comments,
+    upsert_difference_comment,
+)
+from src.audit_constants import (
+    LOGIN_SUCCESS,
+    LOGIN_FAILED,
+    LOGOUT,
+    SESSION_EXPIRED,
+    SESSION_TERMINATED,
+    USER_CREATED,
+    USER_UPDATED,
+    USER_DELETED,
+    ACCOUNT_TYPE_CHANGED,
+    USER_ENABLED,
+    USER_DISABLED,
+    FILE_UPLOADED,
+    FILE_SUBMITTED,
+    INSPECTION_CREATED,
+    INSPECTION_STARTED,
+    INSPECTION_COMPLETED,
+    INSPECTION_FAILED,
+    INSPECTION_CANCELLED,
+    INSPECTION_VIEWED,
+    DIFFERENCE_VIEWED,
+    DIFFERENCE_STATUS_CHANGED,
+    DIFFERENCE_COMMENT_ADDED,
+    REPORT_CREATED,
+    REPORT_VIEWED,
+    REPORT_DOWNLOADED,
+    SYSTEM_SETTINGS_UPDATED,
+    PROFILE_CREATED,
+    PROFILE_UPDATED,
+    PROFILE_DELETED,
+    APPLICATION_MEDINSPECT,
+    MODULE_AUTHENTICATION,
+    MODULE_USER_MANAGEMENT,
+    MODULE_TEXT_INSPECTION,
+    MODULE_REPORT,
+    MODULE_SYSTEM_SETUP,
+    MODULE_AUDIT_TRAIL,
+    STATUS_SUCCESS,
+    STATUS_FAILED,
+    STATUS_WARNING,
+)
 
 app = Flask(__name__)
-
-# Default users to seed into Cosmos DB on startup
-DEFAULT_USERS = [
-    {
-        "id": "user_admin_001",
-        "username": "Admin",
-        "email": "admin@viatris.com",
-        "firstName": "Admin",
-        "lastName": "User",
-        "accountType": "Administrator",
-        "accountStatus": "Active",
-        "company": "Viatris",
-        "domain": "users",
-        "password": "Admin@123",
-        "emailNotificationEnabled": True,
-    },
-    {
-        "id": "user_regular_001",
-        "username": "User",
-        "email": "user@viatris.com",
-        "firstName": "Regular",
-        "lastName": "User",
-        "accountType": "User",
-        "accountStatus": "Active",
-        "company": "Viatris",
-        "domain": "users",
-        "password": "User@123",
-        "emailNotificationEnabled": True,
-    },
-]
-
-
-def seed_default_users():
-    """Seed default users into Cosmos DB if they don't already exist."""
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    for user in DEFAULT_USERS:
-        try:
-            # Check if user already exists by email
-            existing = cosmos_query_documents(
-                "users",
-                {
-                    "query": "SELECT * FROM c WHERE LOWER(c.email) = LOWER(@email)",
-                    "parameters": [{"name": "@email", "value": user["email"]}],
-                },
-            )
-            if existing:
-                logger.info(f"User {user['email']} already exists, skipping.")
-                continue
-            # Create the user
-            payload = {**user, "createdAt": timestamp, "lastLogin": None}
-            cosmos_upsert_document("users", payload)
-            logger.info(f"Seeded user: {user['email']}")
-        except Exception as exc:
-            logger.warning(f"Failed to seed user {user['email']}: {exc}")
 
 UPLOAD_ROOT = os.path.join("webapp_uploads")
 OUTPUT_ROOT = os.path.join("webapp_outputs")
@@ -115,23 +111,6 @@ def api_health():
         "service": "medinspect-backend",
         "azure": get_backend_infrastructure_status(),
     })
-
-
-@app.route("/api/seed", methods=["POST"])
-def api_seed_users():
-    """Manually trigger seeding of default users into Cosmos DB."""
-    try:
-        seed_default_users()
-        # Verify users were created
-        users = cosmos_query_documents("users")
-        return jsonify({
-            "status": "ok",
-            "message": "Seed completed successfully",
-            "userCount": len(users),
-            "users": [{"email": u.get("email"), "username": u.get("username")} for u in users],
-        }), 200
-    except Exception as exc:
-        return jsonify({"status": "error", "error": str(exc)}), 500
 
 
 @app.route("/api/azure/health", methods=["GET"])
@@ -179,8 +158,39 @@ def api_resource_collection(resource):
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 
+    # Hash plaintext passwords on user creation. Already-hashed values are
+    # left untouched.
+    if resource == "users" and isinstance(validated.get("password"), str) and not is_password_hashed(validated["password"]):
+        validated["password"] = hash_password(validated["password"])
+
     try:
         result = cosmos_upsert_document(resource, validated)
+
+        # Audit user management events
+        if resource == "users":
+            account_type = validated.get("accountType", "User")
+            # Get the admin who performed this action (from authenticated context)
+            admin_user, admin_error = _authenticated_identity()
+            if admin_error:
+                return admin_error
+            log_from_authenticated_user(
+                event=USER_CREATED,
+                action="Create User",
+                application=APPLICATION_MEDINSPECT,
+                module=MODULE_USER_MANAGEMENT,
+                authenticated_user=admin_user,
+                status=STATUS_SUCCESS,
+                description=f"User created. Email={validated.get('email', '')}; Account Type={account_type}",
+                entity_type="User",
+                entity_id=result.get("id", ""),
+                metadata={
+                    "newUserEmail": validated.get("email", ""),
+                    "newAccountType": account_type,
+                    "newAccountStatus": validated.get("accountStatus", "Active"),
+                    "createdUserId": result.get("id", ""),
+                },
+            )
+
         return jsonify(result), 200
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
@@ -349,6 +359,42 @@ def _find_session_by_id(session_id: str):
     return None
 
 
+def _authenticated_identity(*, require_admin: bool = False):
+    """Resolve the authenticated user from the server-side database.
+
+    The frontend sends its identity in the X-User-Email header (the app uses
+    mock tokens). The accountType used for authorization is ALWAYS read from
+    the server-side database record — never from any client-sent role value
+    and never inferred from the email address itself.
+    """
+    caller_email = request.headers.get("X-User-Email", "").strip().lower()
+    if not caller_email:
+        return None, (jsonify({"error": "X-User-Email header is required."}), 400)
+    try:
+        users = cosmos_query_documents(
+            "users",
+            {
+                # Case-insensitive: the stored email may differ in casing from
+                # the authenticated identity header (login identifier only).
+                "query": "SELECT * FROM c WHERE LOWER(c.email) = LOWER(@email)",
+                "parameters": [{"name": "@email", "value": caller_email}],
+            },
+        )
+    except Exception as exc:
+        return None, (jsonify({"error": str(exc)}), 500)
+    if not users:
+        return None, (jsonify({"error": "User not found."}), 404)
+    if require_admin:
+        account_type = str(users[0].get("accountType", "User")).strip().lower()
+        if account_type != "administrator":
+            return None, (jsonify({"error": "Administrator access required."}), 403)
+    return users[0], None
+
+
+def _authenticated_user_and_error():
+    """Administrator-only identity resolution (accountType-based)."""
+    return _authenticated_identity(require_admin=True)
+
 def _authenticated_user_and_error():
     """Resolve the authenticated user from the server-side database.
 
@@ -429,17 +475,50 @@ def api_auth_login():
             },
         )
         if not users:
+            # LOGIN_FAILED: user not found
+            log_from_authenticated_user(
+                event=LOGIN_FAILED,
+                action="Login",
+                application=APPLICATION_MEDINSPECT,
+                module=MODULE_AUTHENTICATION,
+                authenticated_user={
+                    "id": str(uuid.uuid4()),
+                    "email": email,
+                    "accountType": "Unknown",
+                },
+                status=STATUS_FAILED,
+                description="Login failed. Invalid email or password.",
+                metadata={"reason": "User not found", "attemptedEmail": email},
+            )
             return jsonify({"error": "Invalid email or password."}), 401
 
         user = users[0]
-        # Validate password against the stored password field
-        if user.get("password") != password:
+        # Validate password against the stored password field.
+        # Stored values are werkzeug hashes; legacy plaintext values are still
+        # accepted and transparently upgraded to a hash on successful login.
+        password_ok, needs_rehash = verify_password(user.get("password"), password)
+        if not password_ok:
+            # LOGIN_FAILED: wrong password
+            log_from_authenticated_user(
+                event=LOGIN_FAILED,
+                action="Login",
+                application=APPLICATION_MEDINSPECT,
+                module=MODULE_AUTHENTICATION,
+                authenticated_user=user,
+                status=STATUS_FAILED,
+                description="Login failed. Invalid email or password.",
+                metadata={"reason": "Invalid password", "attemptedEmail": email},
+            )
             return jsonify({"error": "Invalid email or password."}), 401
 
         # Update lastLogin timestamp in Cosmos DB
         timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         try:
-            cosmos_upsert_document("users", {**user, "lastLogin": timestamp})
+            stored_user = {**user, "lastLogin": timestamp}
+            if needs_rehash:
+                # Upgrade legacy plaintext password to a salted hash
+                stored_user["password"] = hash_password(password)
+            cosmos_upsert_document("users", stored_user)
         except Exception:
             pass  # Non-critical: login succeeds even if lastLogin update fails
 
@@ -494,6 +573,19 @@ def api_auth_login():
         user_data["lastLogin"] = timestamp
         user_data["sessionId"] = session_id
         user_data["loginTime"] = timestamp
+
+        # LOGIN_SUCCESS: record successful login
+        log_from_authenticated_user(
+            event=LOGIN_SUCCESS,
+            action="Login",
+            application=APPLICATION_MEDINSPECT,
+            module=MODULE_AUTHENTICATION,
+            authenticated_user=user,
+            status=STATUS_SUCCESS,
+            description="Successful login.",
+            session_id=session_id,
+        )
+
         return jsonify(user_data), 200
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
@@ -506,13 +598,49 @@ def api_logout():
     The session to delete is identified by the server-issued sessionId in
     the X-Session-Id header — never by the email address. After this call
     the session no longer appears on the Logged-in Users page.
+
+    The X-Logout-Reason header distinguishes WHY the session ended:
+    "user" (intentional logout by the user, default) or "timeout"
+    (automatic logout after session expiry). Both are recorded in the
+    audit trail with different events so administrators can tell them apart.
     """
     session_id = request.headers.get("X-Session-Id", "").strip()
+    logout_reason = (request.headers.get("X-Logout-Reason") or "user").strip().lower()
+    if logout_reason not in ("user", "timeout"):
+        logout_reason = "user"
     if not session_id:
         return jsonify({"loggedOut": False, "error": "Missing X-Session-Id header."}), 400
     existing = _find_session_by_id(session_id)
     if not existing:
         return jsonify({"loggedOut": True, "sessionId": session_id, "note": "Session not found; nothing to delete."}), 200
+
+    # LOGOUT (intentional) / SESSION_EXPIRED (auto timeout): record BEFORE
+    # deleting the session record so the user identity is still available.
+    if logout_reason == "timeout":
+        log_from_authenticated_user(
+            event=SESSION_EXPIRED,
+            action="Auto Logout",
+            application=APPLICATION_MEDINSPECT,
+            module=MODULE_AUTHENTICATION,
+            authenticated_user=existing,
+            status=STATUS_SUCCESS,
+            description="Session expired due to inactivity (automatic logout).",
+            session_id=session_id,
+            metadata={"logoutReason": "timeout", "loginTime": existing.get("loginTime", "")},
+        )
+    else:
+        log_from_authenticated_user(
+            event=LOGOUT,
+            action="Logout",
+            application=APPLICATION_MEDINSPECT,
+            module=MODULE_AUTHENTICATION,
+            authenticated_user=existing,
+            status=STATUS_SUCCESS,
+            description="User logged out successfully.",
+            session_id=session_id,
+            metadata={"logoutReason": "user", "loginTime": existing.get("loginTime", "")},
+        )
+
     _delete_session_record(session_id)
     return jsonify({"loggedOut": True, "sessionId": session_id}), 200
 
@@ -540,6 +668,106 @@ def api_system_information():
         "ssoEnabled": False,
         "restApiAuthenticationType": "TOKEN",
     }), 200
+
+
+@app.route("/api/setup/levels-comments", methods=["GET"])
+def api_get_setup_levels_comments():
+    """Return the current Setup Levels and Comments configuration.
+
+    Any authenticated user may read it (normal users need it to review
+    differences), but only administrators can update it (see the PUT route).
+    ADMIN is authenticated via the X-User-Email header resolved server-side.
+    """
+    _, error = _authenticated_identity()
+    if error:
+        return error
+    try:
+        return jsonify(get_setup_config()), 200
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/setup/levels-comments", methods=["PUT"])
+def api_update_setup_levels_comments():
+    """Administrator-only update of Setup Levels and Comments.
+
+    The caller's accountType is resolved from the server-side database
+    (accountType = "administrator"), never from the frontend payload. Normal
+    users receive 403. Default Level 1/2 and Default Comment 1 are immutable.
+    """
+    admin_user, error = _authenticated_identity(require_admin=True)
+    if error:
+        return error
+
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "JSON object body required."}), 400
+
+    try:
+        config = update_setup_config(payload, admin_user)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+    return jsonify(config), 200
+
+
+@app.route("/api/inspections/<inspection_id>/comments", methods=["GET"])
+def api_inspection_difference_comments(inspection_id: str):
+    """Return persisted user comments for an inspection (owner-verified)."""
+    caller, error = _authenticated_identity()
+    if error:
+        return error
+
+    try:
+        inspection_record = _get_inspection_record(inspection_id)
+    except Exception as exc:
+        logger.error("[DIFF-COMMENT] Load failed for %s: %s", inspection_id, exc)
+        return jsonify({"error": "Failed to load the inspection."}), 500
+    if not inspection_record:
+        return jsonify({"error": "Inspection not found."}), 404
+    if inspection_record.get("userId") != caller.get("id", ""):
+        return jsonify({"error": "You do not have access to this inspection."}), 403
+
+    return jsonify(get_difference_comments(inspection_id)), 200
+
+
+@app.route("/api/inspections/<inspection_id>/differences/<int:difference_id>/comment", methods=["PUT"])
+def update_inspection_difference_comment(inspection_id: str, difference_id: int):
+    """Persist a user comment on a specific difference (owner-verified).
+
+    This does NOT touch the global Setup Levels and Comments configuration.
+    """
+    caller, error = _authenticated_identity()
+    if error:
+        return error
+
+    try:
+        inspection_record = _get_inspection_record(inspection_id)
+    except Exception as exc:
+        logger.error("[DIFF-COMMENT] Load failed for %s: %s", inspection_id, exc)
+        return jsonify({"error": "Failed to load the inspection."}), 500
+    if not inspection_record:
+        return jsonify({"error": "Inspection not found."}), 404
+    if inspection_record.get("userId") != caller.get("id", ""):
+        return jsonify({"error": "You do not have access to this inspection."}), 403
+
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "JSON object body required."}), 400
+
+    user_comment = str(payload.get("userComment") or "").strip()
+    configured_comment = str(payload.get("configuredComment") or "")[:500]
+
+    try:
+        document = upsert_difference_comment(
+            inspection_id=inspection_id,
+            difference_id=difference_id,
+            configured_comment=configured_comment,
+            user_comment=user_comment,
+            authenticated_user=caller,
+        )
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+    return jsonify(document), 200
 
 
 @app.route("/api/sessions", methods=["GET"])
@@ -578,6 +806,28 @@ def api_terminate_session(session_id: str):
     existing = _find_session_by_id(session_id)
     if not existing:
         return jsonify({"error": "Session not found."}), 404
+
+    # SESSION_TERMINATED: record before deleting the session record.
+    # The admin's identity comes from the authenticated backend context;
+    # the target session info comes from the session record being deleted.
+    log_from_authenticated_user(
+        event=SESSION_TERMINATED,
+        action="Terminate Session",
+        application=APPLICATION_MEDINSPECT,
+        module=MODULE_USER_MANAGEMENT,
+        authenticated_user=admin_user,
+        status=STATUS_SUCCESS,
+        description="Session terminated by administrator.",
+        session_id=session_id,
+        entity_type="Session",
+        entity_id=session_id,
+        metadata={
+            "targetUserId": existing.get("userId", ""),
+            "targetUserEmail": existing.get("email", ""),
+            "targetAccountType": existing.get("accountType", ""),
+            "targetSessionId": session_id,
+        },
+    )
 
     try:
         cosmos_delete_document("sessions", session_id)
@@ -649,7 +899,7 @@ def api_change_password():
             return jsonify({"error": "User not found."}), 404
 
         user = users[0]
-        user["password"] = new_password
+        user["password"] = hash_password(new_password)
 
         # Update the user document in Cosmos DB
         cosmos_upsert_document("users", user)
@@ -709,7 +959,39 @@ def api_resource_item(resource, resource_id):
 
     if request.method == "DELETE":
         try:
+            # For user deletions, capture user info before deleting for audit
+            deleted_user_info = None
+            if resource == "users":
+                try:
+                    deleted_user_info = cosmos_get_document(resource, resource_id)
+                except Exception:
+                    pass
+
             result = cosmos_delete_document(resource, resource_id)
+
+            # Audit user deletion
+            if resource == "users" and deleted_user_info:
+                # Get the admin who performed this action (from authenticated context)
+                admin_user, admin_error = _authenticated_identity()
+                if admin_error:
+                    return admin_error
+                log_from_authenticated_user(
+                    event=USER_DELETED,
+                    action="Delete User",
+                    application=APPLICATION_MEDINSPECT,
+                    module=MODULE_USER_MANAGEMENT,
+                    authenticated_user=admin_user,
+                    status=STATUS_SUCCESS,
+                    description=f"User deleted. Email={deleted_user_info.get('email', '')}",
+                    entity_type="User",
+                    entity_id=resource_id,
+                    metadata={
+                        "deletedUserEmail": deleted_user_info.get("email", ""),
+                        "deletedUserId": deleted_user_info.get("id", resource_id),
+                        "deletedAccountType": deleted_user_info.get("accountType", ""),
+                    },
+                )
+
             return jsonify(result), 200
         except Exception as exc:
             return jsonify({"error": str(exc)}), 500
@@ -725,11 +1007,520 @@ def api_resource_item(resource, resource_id):
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 
+    # For user updates, capture the original user data for change tracking
+    original_user = None
+    if resource == "users":
+        try:
+            original_user = cosmos_get_document(resource, resource_id)
+        except Exception:
+            pass
+
+    # Enforce admin-only authorization for user updates
+    if resource == "users":
+        admin_user, admin_error = _authenticated_identity(require_admin=True)
+        if admin_error:
+            return admin_error
+
+    # Hash plaintext passwords on user create/update. Already-hashed values
+    # (e.g. round-tripped from the DB) are left untouched.
+    if resource == "users" and isinstance(validated.get("password"), str) and not is_password_hashed(validated["password"]):
+        validated["password"] = hash_password(validated["password"])
+
     try:
         result = cosmos_upsert_document(resource, validated)
+
+        # Audit user update
+        if resource == "users":
+            account_type = validated.get("accountType", "User")
+            changes = {}
+
+            # Track account type change
+            if original_user and original_user.get("accountType") != account_type:
+                changes["accountType"] = {
+                    "from": original_user.get("accountType"),
+                    "to": account_type,
+                }
+                log_from_authenticated_user(
+                    event=ACCOUNT_TYPE_CHANGED,
+                    action="Change Account Type",
+                    application=APPLICATION_MEDINSPECT,
+                    module=MODULE_USER_MANAGEMENT,
+                    authenticated_user=admin_user,
+                    status=STATUS_SUCCESS,
+                    description=f"Account type changed from {original_user.get('accountType')} to {account_type}. User={validated.get('email', '')}",
+                    entity_type="User",
+                    entity_id=resource_id,
+                    changes=changes,
+                )
+
+            # Track account status change
+            original_status = original_user.get("accountStatus") if original_user else None
+            new_status = validated.get("accountStatus")
+            if original_status and new_status and original_status != new_status:
+                event_type = USER_ENABLED if new_status == "Active" else USER_DISABLED
+                action_text = "Enable User" if new_status == "Active" else "Disable User"
+                changes["accountStatus"] = {
+                    "from": original_status,
+                    "to": new_status,
+                }
+                log_from_authenticated_user(
+                    event=event_type,
+                    action=action_text,
+                    application=APPLICATION_MEDINSPECT,
+                    module=MODULE_USER_MANAGEMENT,
+                    authenticated_user=admin_user,
+                    status=STATUS_SUCCESS,
+                    description=f"User {action_text.lower()}. Email={validated.get('email', '')}; Status changed from {original_status} to {new_status}",
+                    entity_type="User",
+                    entity_id=resource_id,
+                    changes=changes,
+                )
+
+            # General user update audit (if no specific change was logged above,
+            # or in addition to capture the full update)
+            if original_user and not changes:
+                log_from_authenticated_user(
+                    event=USER_UPDATED,
+                    action="Update User",
+                    application=APPLICATION_MEDINSPECT,
+                    module=MODULE_USER_MANAGEMENT,
+                    authenticated_user=admin_user,
+                    status=STATUS_SUCCESS,
+                    description=f"User updated. Email={validated.get('email', '')}",
+                    entity_type="User",
+                    entity_id=resource_id,
+                )
+
         return jsonify(result), 200
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
+
+
+# ---------------------------------------------------------------------------
+# Persistent inspections: Cosmos DB metadata + Azure Blob Storage files
+# ---------------------------------------------------------------------------
+
+INSPECTIONS_CONTAINER = "inspections"
+# Blob containers must match the names provisioned by
+# ensure_storage_containers() in src/azure_service.py — they carry the
+# configured storage_container_prefix (e.g. "hackathon-master-files").
+from src.azure_service import get_azure_settings
+
+_CONTAINER_PREFIX = get_azure_settings().storage_container_prefix or ""
+MASTER_FILES_CONTAINER = f"{_CONTAINER_PREFIX}-master-files".lstrip("-")
+SAMPLE_FILES_CONTAINER = f"{_CONTAINER_PREFIX}-sample-files".lstrip("-")
+
+VALID_INSPECTION_STATUSES = {
+    "uploaded", "submitted", "processing", "completed", "failed", "cancelled",
+}
+
+
+def _safe_blob_name(name: str) -> str:
+    """Sanitize a user-supplied file name for use inside a blob path."""
+    base = os.path.basename(name or "file")
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", base)
+    return safe or "file"
+
+
+def _new_inspection_id() -> str:
+    """Human-readable unique inspection id, e.g. INS-20260904153045-7f3a."""
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    return f"INS-{stamp}-{uuid.uuid4().hex[:4]}"
+
+
+def _file_meta(file_id: str, file_obj, blob_path: str, size: int) -> dict:
+    original = file_obj.filename or "file"
+    return {
+        "fileId": file_id,
+        "fileName": original,
+        "fileType": os.path.splitext(original)[1].lstrip(".").lower(),
+        "blobPath": blob_path,
+        "size": size,
+    }
+
+
+def _inspection_to_client(record: dict, include_result: bool = False) -> dict:
+    """Shape an inspection record for API responses.
+
+    `include_result` is set only for the single-inspection GET — the full
+    report (with rendered page images) would make list responses heavy.
+    """
+    client = {
+        "inspectionId": record.get("id", ""),
+        "userId": record.get("userId", ""),
+        "accountType": record.get("accountType", "User"),
+        "inspectionType": record.get("inspectionType", "text"),
+        "status": record.get("status", "uploaded"),
+        "masterFile": record.get("masterFile"),
+        "sampleFile": record.get("sampleFile"),
+        "createdAt": record.get("createdAt"),
+        "uploadedAt": record.get("uploadedAt"),
+        "submittedAt": record.get("submittedAt"),
+        "startedAt": record.get("startedAt"),
+        "completedAt": record.get("completedAt"),
+        "failedReason": record.get("failedReason"),
+        "resultId": record.get("resultId"),
+        # Full result (with the stored report) is only meaningful on the
+        # single-inspection payload; the list keeps it for simplicity since
+        # the list query already returns complete records.
+        "result": record.get("result"),
+    }
+    if include_result:
+        client["result"] = record.get("result")
+    return client
+
+
+def _get_inspection_record(inspection_id: str):
+    """Fetch an inspection record via a parameterized query.
+
+    Uses the query route (proven to work through the APIM Cosmos API)
+    instead of the point-read route.
+    """
+    records = cosmos_query_documents(
+        INSPECTIONS_CONTAINER,
+        {
+            "query": "SELECT * FROM c WHERE c.id = @id AND c.domain = @domain",
+            "parameters": [
+                {"name": "@id", "value": inspection_id},
+                {"name": "@domain", "value": INSPECTIONS_CONTAINER},
+            ],
+        },
+    ) or []
+    return records[0] if records else None
+
+
+def _delete_inspection_record(inspection_id: str) -> None:
+    """Soft-delete an inspection record via a reliable upsert.
+
+    The APIM Cosmos gateway does not accept single-document DELETE requests
+    (the authorization token signature for the delete verb is rejected), so
+    we set a `deleted` flag on the existing record through `upsert`, which is
+    the path proven to work. Deleted records are excluded from all reads.
+    """
+    record = _get_inspection_record(inspection_id)
+    if not record:
+        raise LookupError(f"Inspection {inspection_id} not found")
+    record["deleted"] = True
+    record["deletedAt"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    cosmos_upsert_document(INSPECTIONS_CONTAINER, record)
+
+
+def _update_inspection_status(inspection_id: str, **updates) -> dict:
+    """Merge status/timestamp updates into an inspection record."""
+    record = _get_inspection_record(inspection_id)
+    if not record:
+        raise LookupError(f"Inspection {inspection_id} not found")
+    record.update(updates)
+    cosmos_upsert_document(INSPECTIONS_CONTAINER, record)
+    return record
+
+
+@app.route("/api/inspections", methods=["GET", "POST"])
+def api_inspections():
+    """List the current user's inspections / create a new inspection.
+
+    Ownership is enforced server-side: the userId in every query/filter comes
+    from the authenticated identity resolved against the database — never
+    from any client-supplied value.
+    """
+    user, error = _authenticated_identity()
+    if error:
+        return error
+    user_id = user.get("id", "")
+
+    if request.method == "GET":
+        try:
+            limit = request.args.get("limit", type=int)
+            query = {
+                "query": "SELECT * FROM c WHERE c.userId = @userId "
+                         "AND (NOT IS_DEFINED(c.deleted) OR c.deleted = false) "
+                         "ORDER BY c.createdAt DESC",
+                "parameters": [{"name": "@userId", "value": user_id}],
+            }
+            records = cosmos_query_documents(INSPECTIONS_CONTAINER, query) or []
+            if limit and limit > 0:
+                records = records[:limit]
+            return jsonify([_inspection_to_client(r) for r in records]), 200
+        except Exception as exc:
+            logger.error("[INSPECTIONS] List failed: %s", exc)
+            return jsonify({"error": "Failed to load inspections."}), 500
+
+    # POST — create the inspection: metadata in Cosmos, files in Blob Storage
+    master = request.files.get("master")
+    sample = request.files.get("sample")
+    inspection_type = (request.form.get("inspectionType") or "text").strip().lower()
+    if not master or not sample:
+        return jsonify({"error": "master and sample files are required"}), 400
+
+    inspection_id = _new_inspection_id()
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    master_file_id = f"FILE-{uuid.uuid4().hex[:8]}"
+    sample_file_id = f"FILE-{uuid.uuid4().hex[:8]}"
+
+    master_blob = (
+        f"{inspection_id}-master-{master_file_id}-{_safe_blob_name(master.filename)}"
+    )
+    sample_blob = (
+        f"{inspection_id}-sample-{sample_file_id}-{_safe_blob_name(sample.filename)}"
+    )
+    # NOTE: blob names are kept flat (no "/" segments) because the configured
+    # Azure APIM storage gateway routes a single path segment per blob. The
+    # inspectionFiles/…/{master|sample}/… logical structure is achieved via
+    # the container split (master-files / sample-files) and the inspectionId
+    # prefix on every blob name.
+
+    master_content = master.read()
+    sample_content = sample.read()
+
+    try:
+        upload_blob(
+            MASTER_FILES_CONTAINER, master_blob, master_content,
+            content_type=master.mimetype or "application/octet-stream",
+        )
+        upload_blob(
+            SAMPLE_FILES_CONTAINER, sample_blob, sample_content,
+            content_type=sample.mimetype or "application/octet-stream",
+        )
+    except Exception as exc:
+        logger.error("[INSPECTIONS] Blob upload failed for %s: %s", inspection_id, exc)
+        return jsonify({"error": "Failed to store uploaded files."}), 500
+
+    record = {
+        "id": inspection_id,
+        "userId": user_id,
+        "accountType": str(user.get("accountType", "User")),
+        "domain": INSPECTIONS_CONTAINER,  # partition key
+        "inspectionType": inspection_type,
+        "status": "uploaded",
+        "masterFile": _file_meta(master_file_id, master, master_blob, len(master_content)),
+        "sampleFile": _file_meta(sample_file_id, sample, sample_blob, len(sample_content)),
+        "createdAt": now,
+        "uploadedAt": now,
+        "submittedAt": None,
+        "startedAt": None,
+        "completedAt": None,
+        "resultId": None,
+        "createdBy": user_id,
+    }
+    try:
+        cosmos_upsert_document(INSPECTIONS_CONTAINER, record)
+    except Exception as exc:
+        logger.error("[INSPECTIONS] Cosmos write failed for %s: %s", inspection_id, exc)
+        return jsonify({"error": "Failed to save the inspection."}), 500
+
+    # Keep local copies so the existing inspection engine (which reads from
+    # UPLOAD_ROOT) keeps working unchanged.
+    try:
+        session_dir = os.path.join(UPLOAD_ROOT, inspection_id)
+        os.makedirs(session_dir, exist_ok=True)
+        with open(os.path.join(session_dir, "master.pdf"), "wb") as fh:
+            fh.write(master_content)
+        with open(os.path.join(session_dir, "sample.pdf"), "wb") as fh:
+            fh.write(sample_content)
+    except Exception as exc:
+        logger.warning("[INSPECTIONS] Local cache write failed for %s: %s", inspection_id, exc)
+
+    # Audit: FILE_UPLOADED for master file
+    log_from_authenticated_user(
+        event=FILE_UPLOADED,
+        action="File Upload",
+        application=APPLICATION_MEDINSPECT,
+        module=MODULE_TEXT_INSPECTION,
+        authenticated_user=user,
+        status=STATUS_SUCCESS,
+        description=f"Master File uploaded. File={master.filename}",
+        entity_type="File",
+        entity_id=master_file_id,
+        inspection_id=inspection_id,
+        file_id=master_file_id,
+        file_name=master.filename,
+        master_file_name=master.filename,
+    )
+
+    # Audit: FILE_UPLOADED for sample file
+    log_from_authenticated_user(
+        event=FILE_UPLOADED,
+        action="File Upload",
+        application=APPLICATION_MEDINSPECT,
+        module=MODULE_TEXT_INSPECTION,
+        authenticated_user=user,
+        status=STATUS_SUCCESS,
+        description=f"Sample File uploaded. File={sample.filename}",
+        entity_type="File",
+        entity_id=sample_file_id,
+        inspection_id=inspection_id,
+        file_id=sample_file_id,
+        file_name=sample.filename,
+        sample_file_name=sample.filename,
+    )
+
+    # Audit: INSPECTION_CREATED
+    log_from_authenticated_user(
+        event=INSPECTION_CREATED,
+        action="Create Inspection",
+        application=APPLICATION_MEDINSPECT,
+        module=MODULE_TEXT_INSPECTION,
+        authenticated_user=user,
+        status=STATUS_SUCCESS,
+        description=f"Inspection created. Inspection ID={inspection_id}; Type={inspection_type}",
+        entity_type="Inspection",
+        entity_id=inspection_id,
+        inspection_id=inspection_id,
+        master_file_name=master.filename,
+        sample_file_name=sample.filename,
+    )
+
+    return jsonify(_inspection_to_client(record)), 201
+
+
+@app.route("/api/inspections/<inspection_id>", methods=["GET", "DELETE"])
+def api_inspection_by_id(inspection_id: str):
+    """Retrieve / delete a single inspection (owner-only).
+
+    The backend verifies that the inspection belongs to the authenticated
+    user before returning or deleting it. Another user's inspection is
+    never exposed.
+    """
+    user, error = _authenticated_identity()
+    if error:
+        return error
+    user_id = user.get("id", "")
+
+    try:
+        record = _get_inspection_record(inspection_id)
+    except Exception as exc:
+        logger.error("[INSPECTIONS] Fetch failed for %s: %s", inspection_id, exc)
+        return jsonify({"error": "Failed to load the inspection."}), 500
+
+    if not record:
+        return jsonify({"error": "Inspection not found."}), 404
+    if record.get("userId") != user_id:
+        return jsonify({"error": "You do not have access to this inspection."}), 403
+
+    # A soft-deleted inspection behaves as not found for owners too.
+    if record.get("deleted") and request.method != "DELETE":
+        return jsonify({"error": "Inspection not found."}), 404
+
+    # AUDIT: record that the inspection was viewed (before returning data)
+    if request.method == "GET":
+        try:
+            log_from_authenticated_user(
+                event=INSPECTION_VIEWED,
+                action="View Inspection",
+                application=APPLICATION_MEDINSPECT,
+                module=MODULE_TEXT_INSPECTION,
+                authenticated_user=user,
+                status=STATUS_SUCCESS,
+                description=f"Inspection viewed. Inspection ID={inspection_id}",
+                entity_type="Inspection",
+                entity_id=inspection_id,
+                metadata={
+                    "inspectionType": record.get("inspectionType", ""),
+                    "inspectionStatus": record.get("status", ""),
+                    "masterFileName": record.get("masterFile", {}).get("fileName", ""),
+                    "sampleFileName": record.get("sampleFile", {}).get("fileName", ""),
+                },
+            )
+        except Exception:
+            pass  # Audit failure must never block the view
+
+    if request.method == "DELETE":
+        for meta_key in ("masterFile", "sampleFile"):
+            meta = record.get(meta_key) or {}
+            blob_path = meta.get("blobPath")
+            if blob_path:
+                container = (
+                    MASTER_FILES_CONTAINER if meta_key == "masterFile"
+                    else SAMPLE_FILES_CONTAINER
+                )
+                try:
+                    delete_blob(container, blob_path)
+                except Exception:
+                    pass
+        try:
+            _delete_inspection_record(inspection_id)
+        except Exception as exc:
+            logger.error("[INSPECTIONS] Delete failed for %s: %s", inspection_id, exc)
+            return jsonify({"error": "Failed to delete the inspection."}), 500
+        return jsonify({"deleted": True, "inspectionId": inspection_id}), 200
+
+    return jsonify(_inspection_to_client(record, include_result=True)), 200
+
+
+@app.route("/api/inspections/<inspection_id>/file", methods=["GET"])
+def api_inspection_file(inspection_id: str):
+    """Stream an inspection's master/sample file (owner-verified).
+
+    Returns the actual file bytes that were persisted for the inspection so
+    the frontend can reconstruct a real File object for the PDF viewer. The
+    authenticated user must own the inspection — otherwise nothing is
+    returned (403). This is a secure download path: blob storage keys and
+    connection strings never reach the browser.
+    """
+    user, error = _authenticated_identity()
+    if error:
+        return error
+    user_id = user.get("id", "")
+
+    side = request.args.get("side", "")
+    if side not in ("master", "sample"):
+        return jsonify({"error": "side must be 'master' or 'sample'"}), 400
+
+    try:
+        record = _get_inspection_record(inspection_id)
+    except Exception as exc:
+        logger.error("[INSPECTIONS] file fetch failed for %s: %s", inspection_id, exc)
+        return jsonify({"error": "Failed to load the inspection."}), 500
+
+    if not record:
+        return jsonify({"error": "Inspection not found."}), 404
+    if record.get("userId") != user_id:
+        return jsonify({"error": "You do not have access to this inspection."}), 403
+    if record.get("deleted"):
+        return jsonify({"error": "Inspection not found."}), 404
+
+    # Remap the persisted blob / local engine copy into a file path.
+    side_key = "masterFile" if side == "master" else "sampleFile"
+    file_meta = record.get(side_key) or {}
+    file_name = file_meta.get("fileName") or (f"{side}.pdf")
+
+    # Prefer the local engine copy written at creation time.
+    local_path = os.path.join(UPLOAD_ROOT, inspection_id, f"{side}.pdf")
+    if os.path.exists(local_path):
+        with open(local_path, "rb") as fh:
+            data = fh.read()
+    else:
+        # Fall back to Azure Blob Storage (owner already verified above).
+        try:
+            blob_path = file_meta.get("blobPath")
+            if not blob_path:
+                return jsonify({"error": "File is not available."}), 404
+            container = (
+                MASTER_FILES_CONTAINER if side == "master"
+                else SAMPLE_FILES_CONTAINER
+            )
+            data = download_blob(container, blob_path)
+        except Exception as exc:
+            logger.error("[INSPECTIONS] blob download failed for %s: %s", inspection_id, exc)
+            return jsonify({"error": "File is not available."}), 500
+
+    mime_type = "application/pdf"
+    ext = file_name.lower().rsplit(".", 1)[-1] if "." in file_name else ""
+    if ext == "docx":
+        mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    elif ext == "doc":
+        mime_type = "application/msword"
+    elif ext in ("png", "jpg", "jpeg", "gif", "bmp"):
+        mime_type = f"image/{ext}"
+
+    return (
+        data,
+        200,
+        {
+            "Content-Type": mime_type,
+            "Content-Disposition": f'attachment; filename="{file_name}"',
+        },
+    )
 
 
 @app.route("/api/storage/upload", methods=["POST"])
@@ -813,9 +1604,75 @@ def api_inspect():
     # front-end doesn't send inspection_type (older clients).
     inspection_type = data.get("inspection_type", "text")
 
+    # Optional persistent inspection linkage. When the frontend sends an
+    # inspection_id (created via POST /api/inspections), the lifecycle
+    # status/timestamps are tracked in Cosmos DB and the result is stored
+    # against that inspection for the owning user.
+    inspection_id = (data.get("inspection_id") or "").strip() or None
+    inspection_record = None
+    if inspection_id:
+        caller, auth_error = _authenticated_identity()
+        if auth_error:
+            return auth_error
+        try:
+            inspection_record = _get_inspection_record(inspection_id)
+        except Exception as exc:
+            logger.error("[INSPECT] Load failed for %s: %s", inspection_id, exc)
+            return jsonify({"error": "Failed to load the inspection."}), 500
+        if not inspection_record:
+            return jsonify({"error": "Inspection not found."}), 404
+        if inspection_record.get("userId") != caller.get("id", ""):
+            return jsonify({"error": "You do not have access to this inspection."}), 403
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        _update_inspection_status(
+            inspection_id,
+            status="processing",
+            submittedAt=inspection_record.get("submittedAt") or now,
+            startedAt=now,
+            inspectionType=inspection_type,
+        )
+
+        # Audit: INSPECTION_STARTED
+        master_file_name = inspection_record.get("masterFile", {}).get("fileName", "")
+        sample_file_name = inspection_record.get("sampleFile", {}).get("fileName", "")
+        log_from_authenticated_user(
+            event=INSPECTION_STARTED,
+            action="Start Inspection",
+            application=APPLICATION_MEDINSPECT,
+            module=MODULE_TEXT_INSPECTION,
+            authenticated_user=caller,
+            status=STATUS_SUCCESS,
+            description=f"Inspection started. Inspection ID={inspection_id}; Type={inspection_type}",
+            entity_type="Inspection",
+            entity_id=inspection_id,
+            inspection_id=inspection_id,
+            master_file_name=master_file_name,
+            sample_file_name=sample_file_name,
+        )
+
     try:
         config = get_inspection_config(inspection_type)
     except ValueError as e:
+        if inspection_id:
+            _update_inspection_status(
+                inspection_id,
+                status="failed",
+                failedReason="Unknown inspection type.",
+                completedAt=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            )
+            # Audit: INSPECTION_FAILED
+            log_from_authenticated_user(
+                event=INSPECTION_FAILED,
+                action="Inspection Failed",
+                application=APPLICATION_MEDINSPECT,
+                module=MODULE_TEXT_INSPECTION,
+                authenticated_user=caller,
+                status=STATUS_FAILED,
+                description=f"Inspection failed. Inspection ID={inspection_id}; Reason=Unknown inspection type",
+                entity_type="Inspection",
+                entity_id=inspection_id,
+                inspection_id=inspection_id,
+            )
         return jsonify({"error": str(e)}), 400
 
     session_dir = os.path.join(UPLOAD_ROOT, session_id)
@@ -823,11 +1680,40 @@ def api_inspect():
     sample_path = os.path.join(session_dir, "sample.pdf")
 
     if not os.path.exists(master_path) or not os.path.exists(sample_path):
+        if inspection_id:
+            _update_inspection_status(
+                inspection_id,
+                status="failed",
+                failedReason="Master and sample files are missing.",
+                completedAt=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            )
         return jsonify({"error": "Both Master and Sample must be uploaded first"}), 400
 
     try:
         result = config.pipeline(master_path, sample_path, filters=filters)
     except Exception as e:
+        if inspection_id:
+            # Store a safe, generic failure reason — no internal details.
+            logger.error("[INSPECT] Pipeline failed for %s: %s", inspection_id, e)
+            _update_inspection_status(
+                inspection_id,
+                status="failed",
+                failedReason=f"{config.label} failed during processing.",
+                completedAt=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            )
+            # Audit: INSPECTION_FAILED
+            log_from_authenticated_user(
+                event=INSPECTION_FAILED,
+                action="Inspection Failed",
+                application=APPLICATION_MEDINSPECT,
+                module=MODULE_TEXT_INSPECTION,
+                authenticated_user=caller,
+                status=STATUS_FAILED,
+                description=f"Inspection failed. Inspection ID={inspection_id}; Reason={config.label} failed during processing",
+                entity_type="Inspection",
+                entity_id=inspection_id,
+                inspection_id=inspection_id,
+            )
         return jsonify({"error": f"{config.label} failed: {str(e)}"}), 500
 
     output_dir = os.path.join(OUTPUT_ROOT, session_id)
@@ -835,6 +1721,14 @@ def api_inspect():
     try:
         report = build_report(master_path, sample_path, result, output_dir)
     except Exception as e:
+        if inspection_id:
+            logger.error("[INSPECT] Report rendering failed for %s: %s", inspection_id, e)
+            _update_inspection_status(
+                inspection_id,
+                status="failed",
+                failedReason="Report rendering failed.",
+                completedAt=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            )
         return jsonify({"error": f"Report rendering failed: {str(e)}"}), 500
 
     for page in report["pages"]:
@@ -844,6 +1738,38 @@ def api_inspect():
             page["sample_image"] = f"/images/{session_id}/{os.path.basename(page['sample_image'])}"
 
     report["match_stats"] = result["match_stats"]
+
+    if inspection_id:
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        result_id = f"RES-{inspection_id}"
+        try:
+            _update_inspection_status(
+                inspection_id,
+                status="completed",
+                completedAt=now,
+                resultId=result_id,
+                result={"resultId": result_id, "report": report},
+            )
+            # Audit: INSPECTION_COMPLETED
+            log_from_authenticated_user(
+                event=INSPECTION_COMPLETED,
+                action="Inspection Completed",
+                application=APPLICATION_MEDINSPECT,
+                module=MODULE_TEXT_INSPECTION,
+                authenticated_user=caller,
+                status=STATUS_SUCCESS,
+                description=f"Inspection completed successfully. Inspection ID={inspection_id}",
+                entity_type="Inspection",
+                entity_id=inspection_id,
+                inspection_id=inspection_id,
+                metadata={
+                    "resultId": result_id,
+                    "findingsCount": len(report.get("findings", [])),
+                },
+            )
+        except Exception as exc:
+            logger.error("[INSPECT] Result persistence failed for %s: %s", inspection_id, exc)
+
     return jsonify(report)
 
 
@@ -1309,6 +2235,152 @@ function escapeHtml(s) {
 </html>
 """
 
+# ---------------------------------------------------------------------------
+# Audit Trail API — Administrator-only access to audit logs
+# ---------------------------------------------------------------------------
+
+
+@app.route("/api/audit-logs", methods=["GET"])
+def api_audit_logs():
+    """Retrieve audit logs with pagination and filtering (administrator-only).
+
+    Only users with accountType = "administrator" can access this endpoint.
+    Normal users receive 403 Forbidden.
+
+    Query parameters:
+        page (int): Page number (1-based, default 1)
+        limit (int): Items per page (default 50, max 100)
+        startDate (str): Filter by start date (ISO 8601)
+        endDate (str): Filter by end date (ISO 8601)
+        userId (str): Filter by user ID
+        accountType (str): Filter by account type
+        event (str): Filter by event type
+        module (str): Filter by module
+        status (str): Filter by status
+        inspectionId (str): Filter by inspection ID
+        search (str): Search in description, user email, action
+    """
+    # Enforce administrator-only access on the backend.
+    # _authenticated_user_and_error() resolves accountType from the database
+    # and returns 403 for non-administrators. This is the single source of
+    # truth for admin authorization — never email-based, never frontend-trusted.
+    admin_user, error = _authenticated_user_and_error()
+    if error:
+        return error
+
+    # Parse query parameters
+    page = max(1, request.args.get("page", 1, type=int))
+    limit = min(100, max(1, request.args.get("limit", 50, type=int)))
+    start_date = request.args.get("startDate", "")
+    end_date = request.args.get("endDate", "")
+    user_id = request.args.get("userId", "")
+    account_type = request.args.get("accountType", "")
+    event = request.args.get("event", "")
+    module = request.args.get("module", "")
+    status = request.args.get("status", "")
+    inspection_id = request.args.get("inspectionId", "")
+    search = request.args.get("search", "")
+
+    # Build the query dynamically
+    conditions = ["c.domain = @domain"]
+    parameters = [{"name": "@domain", "value": AUDIT_LOGS_CONTAINER}]
+
+    if start_date:
+        conditions.append("c.timestamp >= @startDate")
+        parameters.append({"name": "@startDate", "value": start_date})
+
+    if end_date:
+        conditions.append("c.timestamp <= @endDate")
+        parameters.append({"name": "@endDate", "value": end_date})
+
+    if user_id:
+        conditions.append("c.userId = @userId")
+        parameters.append({"name": "@userId", "value": user_id})
+
+    if account_type:
+        conditions.append("c.accountType = @accountType")
+        parameters.append({"name": "@accountType", "value": account_type})
+
+    if event:
+        conditions.append("c.event = @event")
+        parameters.append({"name": "@event", "value": event})
+
+    if module:
+        conditions.append("c.module = @module")
+        parameters.append({"name": "@module", "value": module})
+
+    if status:
+        conditions.append("c.status = @status")
+        parameters.append({"name": "@status", "value": status})
+
+    if inspection_id:
+        conditions.append("c.inspectionId = @inspectionId")
+        parameters.append({"name": "@inspectionId", "value": inspection_id})
+
+    if search:
+        conditions.append(
+            "(CONTAINS(LOWER(c.description), LOWER(@search)) OR "
+            "CONTAINS(LOWER(c.email), LOWER(@search)) OR "
+            "CONTAINS(LOWER(c.action), LOWER(@search)))"
+        )
+        parameters.append({"name": "@search", "value": search})
+
+    where_clause = " AND ".join(conditions)
+    query = {
+        "query": f"SELECT * FROM c WHERE {where_clause} ORDER BY c.timestamp DESC",
+        "parameters": parameters,
+    }
+
+    try:
+        all_records = cosmos_query_documents(AUDIT_LOGS_CONTAINER, query) or []
+        total = len(all_records)
+
+        # Apply pagination
+        start_idx = (page - 1) * limit
+        end_idx = start_idx + limit
+        paginated_records = all_records[start_idx:end_idx]
+
+        return jsonify({
+            "items": paginated_records,
+            "page": page,
+            "limit": limit,
+            "total": total,
+        }), 200
+    except Exception as exc:
+        logger.error("[AUDIT] Failed to retrieve audit logs: %s", exc)
+        return jsonify({"error": "Failed to retrieve audit logs."}), 500
+
+
+@app.route("/api/audit-logs/<log_id>", methods=["GET"])
+def api_audit_log_by_id(log_id: str):
+    """Retrieve a single audit log by ID (administrator-only).
+
+    Only users with accountType = "administrator" can access this endpoint.
+    """
+    # Enforce administrator-only access on the backend
+    admin_user, error = _authenticated_user_and_error()
+    if error:
+        return error
+
+    try:
+        records = cosmos_query_documents(
+            AUDIT_LOGS_CONTAINER,
+            {
+                "query": "SELECT * FROM c WHERE c.id = @id AND c.domain = @domain",
+                "parameters": [
+                    {"name": "@id", "value": log_id},
+                    {"name": "@domain", "value": AUDIT_LOGS_CONTAINER},
+                ],
+            },
+        )
+        if not records:
+            return jsonify({"error": "Audit log not found."}), 404
+
+        return jsonify(records[0]), 200
+    except Exception as exc:
+        logger.error("[AUDIT] Failed to retrieve audit log %s: %s", log_id, exc)
+        return jsonify({"error": "Failed to retrieve audit log."}), 500
+
+
 if __name__ == "__main__":
-    seed_default_users()
     app.run(debug=True, port=5000)

@@ -101,7 +101,8 @@ export default function Header() {
   const handleLogout = () => {
     // Delete the server-side session record first (best-effort) so this
     // login no longer appears under Logged-in Users, then clear locally.
-    void logoutServerSession();
+    // Reason "user" records an intentional LOGOUT event in the audit trail.
+    void logoutServerSession("user");
     clearSession();
     navigate("/login");
   };

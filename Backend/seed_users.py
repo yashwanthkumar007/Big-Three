@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from src.azure_service import cosmos_query_documents, cosmos_upsert_document
 from src.logger import logger
+from src.password_utils import hash_password
 
 DEFAULT_USERS = [
     {
@@ -67,18 +68,29 @@ def seed_users():
                 },
             )
             if existing:
-                # Update existing user with latest data
+                # Update existing user with latest data, but NEVER reset the
+                # password — an admin/user may have changed it since seeding.
+                # NOTE: cosmos_upsert_document REPLACES the whole document, so
+                # we must merge the seed data INTO the existing document.
                 existing_user = existing[0]
-                payload = {**user, "createdAt": existing_user.get("createdAt", timestamp), "lastLogin": existing_user.get("lastLogin")}
+                seed_fields = {k: v for k, v in user.items() if k != "password"}
+                payload = {**existing_user, **seed_fields}
+                payload["createdAt"] = existing_user.get("createdAt", timestamp)
+                payload["lastLogin"] = existing_user.get("lastLogin")
                 # Preserve the existing document's id
                 payload["id"] = existing_user.get("id", user["id"])
                 cosmos_upsert_document("users", payload)
-                print(f"✓ User {email} already exists, updated.")
+                print(f"✓ User {email} already exists, updated (password preserved).")
                 results.append({"email": email, "status": "updated"})
                 continue
 
-            # Create the user
-            payload = {**user, "createdAt": timestamp, "lastLogin": None}
+            # Create the user — store the password hashed, never in plaintext.
+            payload = {
+                **user,
+                "password": hash_password(user["password"]),
+                "createdAt": timestamp,
+                "lastLogin": None,
+            }
             cosmos_upsert_document("users", payload)
             print(f"✓ Successfully seeded user: {email}")
             results.append({"email": email, "status": "created"})

@@ -27,12 +27,16 @@ import InspectionResults, {
 import { useUploadStore, type InspectionType } from "@/store/uploadStore";
 import { truncateFileName } from "@/shared/utils/truncateFileName";
 
-import { startInspection } from "@/shared/api/inspectionApi";
+import { startInspection, createInspection } from "@/shared/api/inspectionApi";
+
+import { useQueryClient } from "@tanstack/react-query";
 
 import { useLoadingStatus } from "@/shared/hooks/useInspectionLoading";
 
 export default function WorkspacePage() {
   const navigate = useNavigate();
+
+  const queryClient = useQueryClient();
 
   const { inspectionType } = useParams();
 
@@ -110,6 +114,28 @@ export default function WorkspacePage() {
 
       setStatus("Uploading files...");
 
+      /*
+       * Persist the inspection first: files go to Azure Blob Storage and
+       * the inspection record to Cosmos DB, owned by the authenticated
+       * user (the backend resolves the user — never the client). If the
+       * persistence layer is unavailable, fall back to the legacy
+       * ephemeral flow so the workspace keeps working.
+       */
+      let inspectionId: string | undefined;
+      try {
+        const inspection = await createInspection(
+          masterFile,
+          sampleFile,
+          inspectionType ?? "text"
+        );
+        inspectionId = inspection.inspectionId;
+      } catch (persistError) {
+        console.warn(
+          "[WORKSPACE] Persistent inspection unavailable, running ephemeral:",
+          persistError
+        );
+      }
+
       const {
         sessionId,
         report,
@@ -121,6 +147,7 @@ export default function WorkspacePage() {
            * (text -> TXT-, graphics -> GRP-, etc.). */
           inspectionType: inspectionType as InspectionType,
           differenceFilters,
+          inspectionId,
           onStatus: ({
             status: currentStatus,
           }) => {
@@ -148,6 +175,10 @@ export default function WorkspacePage() {
 
       setInspectionReport(report);
 
+      // Refresh the dashboard's Recent Inspections list so the newly
+      // created/completed inspection shows up without a manual reload.
+      void queryClient.invalidateQueries({ queryKey: ["inspections"] });
+
       // Store file names in the shared store so the Difference List
       // window can display them without needing the File objects.
       setMasterFile(masterFile);
@@ -164,6 +195,11 @@ export default function WorkspacePage() {
 
       setError(message);
 
+      // Reflect the failure on the persistent inspection record (the
+      // backend already marked it failed when the engine raised; this
+      // also covers frontend-side failures like network drops).
+      void queryClient.invalidateQueries({ queryKey: ["inspections"] });
+
       setInspectionStatus("failed");
 
       setStatus(null);
@@ -178,6 +214,7 @@ export default function WorkspacePage() {
     sampleFile,
     inspectionType,
     differenceFilters,
+    queryClient,
     setInspectionStatus,
     setInspectionReport,
     setSessionId,

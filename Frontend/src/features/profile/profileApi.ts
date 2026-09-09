@@ -196,7 +196,7 @@ export async function fetchMyProfile(): Promise<UserProfile> {
     });
     const profile = normalizeProfile(data);
     return profile;
-  } catch (error) {
+  } catch {
     // Backend unavailable (404, 405, 5xx, network error, CORS, etc.) OR
     // any other error -> fall back to session-derived profile so the
     // UI always shows data. Never block the profile page on a backend call.

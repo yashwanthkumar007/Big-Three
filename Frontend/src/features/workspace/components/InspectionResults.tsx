@@ -35,7 +35,6 @@ import {
   Typography,
 } from "@mui/material";
 
-import AddCommentOutlinedIcon from "@mui/icons-material/AddCommentOutlined";
 import GridViewOutlinedIcon from "@mui/icons-material/GridViewOutlined";
 import FilterAltOutlinedIcon from "@mui/icons-material/FilterAltOutlined";
 import VisibilityOffOutlinedIcon from "@mui/icons-material/VisibilityOffOutlined";
@@ -69,6 +68,16 @@ import {
   downloadInspectionPdf,
   generateInspectionReportPdfBlob,
 } from "@/shared/utils/pdfReportGenerator";
+import { useSetupConfig } from "@/shared/hooks/useSetupConfig";
+import {
+  configuredLevelOptions,
+  configuredCommentOptions,
+  isEditableCommentPlaceholder,
+} from "@/shared/utils/setupLevels";
+import {
+  getInspectionDifferenceComments,
+  updateInspectionDifferenceComment,
+} from "@/features/admin/systemApi";
 
 export type DifferenceType =
   | "Change"
@@ -305,15 +314,25 @@ export default function InspectionResults({
   /* Comment / status management                                        */
   /* ------------------------------------------------------------------ */
 
-  const COMMENT_OPTIONS = [
-    "Reviewed",
-    "Approved",
-    "To be verified",
-    "None",
-    "Comment1",
-    "Comment2",
-    "Comment3",
-  ];
+  /**
+   * Admin-configured comments (Setup Levels & Comments page). The default
+   * comment comes first, followed by every non-empty custom comment.
+   */
+  const { data: setupConfig } = useSetupConfig();
+  const configuredComments = useMemo(() => {
+    const options = configuredCommentOptions(setupConfig ?? null);
+    const defaultComment = setupConfig?.comments.default1?.trim();
+    const all = defaultComment ? [defaultComment, ...options] : options;
+    return [...new Set(all)];
+  }, [setupConfig]);
+
+  /** Admin-configured severity levels (non-empty, de-duplicated). */
+  const configuredLevels = useMemo(() => {
+    const options = configuredLevelOptions(setupConfig ?? null).filter(
+      (value) => value && value.trim() !== ""
+    );
+    return [...new Set(options)];
+  }, [setupConfig]);
 
   /**
    * Per-difference comment/status selection from the shared store.
@@ -340,11 +359,6 @@ export default function InspectionResults({
    * These appear in the dropdown as "Comment1", "Comment2", "Comment3".
    */
   const customComments = useUploadStore((state) => state.customComments);
-  const setCustomComments = useUploadStore((state) => state.setCustomComments);
-
-  /** Dialog state for adding a new comment. */
-  const [addCommentOpen, setAddCommentOpen] = useState(false);
-  const [newCommentText, setNewCommentText] = useState("");
 
   const getCommentValue = (differenceId: number) =>
     commentSelections[differenceId] ?? "None";
@@ -369,17 +383,56 @@ export default function InspectionResults({
   /** Difference id currently being edited via double-click. */
   const [editingCommentId, setEditingCommentId] = useState<number | null>(null);
   const [editingCommentText, setEditingCommentText] = useState("");
+  /** The configured placeholder (e.g. "Comment1") that is being replaced. */
+  const [editingPlaceholder, setEditingPlaceholder] = useState("");
+
+  /**
+   * Load user comments persisted in Cosmos DB for THIS inspection so that
+   * reopening an old inspection shows the comments written previously.
+   * They are merged into the shared store, which also feeds the PDF report.
+   */
+  useEffect(() => {
+    const inspectionId = result.inspectionId;
+    if (!inspectionId) {
+      return;
+    }
+    let cancelled = false;
+    void getInspectionDifferenceComments(inspectionId)
+      .then((saved) => {
+        if (cancelled || saved.length === 0) {
+          return;
+        }
+        const restored: Record<number, string> = {};
+        for (const entry of saved) {
+          const userComment = (entry.userComment ?? "").trim();
+          if (userComment) {
+            restored[entry.differenceId] = userComment;
+          }
+        }
+        if (Object.keys(restored).length > 0) {
+          setCommentSelections({
+            ...useUploadStore.getState().commentSelections,
+            ...restored,
+          });
+        }
+      })
+      .catch(() => {
+        /* Non-critical: without persistence the session still works. */
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once per inspection
+  }, [result.inspectionId]);
 
   const handleStartEdit = (difference: InspectionDifference) => {
     const currentValue = getCommentValue(difference.id);
-    // Only allow editing when a Comment1/2/3 is selected
-    if (
-      currentValue === "Comment1" ||
-      currentValue === "Comment2" ||
-      currentValue === "Comment3"
-    ) {
+    // Only allow free-text editing when a "Comment1" / "Comment 2" … style
+    // placeholder is selected — these exist for the user to replace.
+    if (isEditableCommentPlaceholder(currentValue)) {
       setEditingCommentId(difference.id);
-      setEditingCommentText(currentValue);
+      setEditingCommentText("");
+      setEditingPlaceholder(currentValue);
     }
   };
 
@@ -390,23 +443,29 @@ export default function InspectionResults({
         ...commentSelections,
         [differenceId]: trimmed,
       });
+
+      // Persist the user comment so it survives across sessions and is
+      // included when the PDF report is regenerated later.
+      const inspectionId = result.inspectionId;
+      if (inspectionId) {
+        void updateInspectionDifferenceComment(
+          inspectionId,
+          differenceId,
+          {
+            configuredComment: editingPlaceholder,
+            userComment: trimmed,
+          }
+        ).catch((error) => {
+          console.warn(
+            "[DIFF-COMMENT] Failed to persist user comment:",
+            error
+          );
+        });
+      }
     }
     setEditingCommentId(null);
     setEditingCommentText("");
-  };
-
-  const handleAddComment = () => {
-    const trimmed = newCommentText.trim();
-    if (!trimmed) {
-      return;
-    }
-
-    const next = [...customComments, trimmed];
-    // Keep only the latest 3 custom comments
-    setCustomComments(next.length > 3 ? next.slice(next.length - 3) : next);
-
-    setNewCommentText("");
-    setAddCommentOpen(false);
+    setEditingPlaceholder("");
   };
 
   /* ------------------------------------------------------------------ */
@@ -1101,34 +1160,7 @@ export default function InspectionResults({
                   borderBottom: "1px solid #cdd2d7",
                 }}
               >
-                <Box
-                  sx={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: 0.5,
-                  }}
-                >
-                  Comment
-                  <Tooltip title="Add comment" arrow>
-                    <IconButton
-                      size="small"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        setAddCommentOpen(true);
-                      }}
-                      sx={{
-                        p: 0.25,
-                        color: "#2A276E",
-                        "&:hover": {
-                          bgcolor: "rgba(42, 39, 110, 0.08)",
-                        },
-                      }}
-                    >
-                      <AddCommentOutlinedIcon fontSize="small" />
-                    </IconButton>
-                  </Tooltip>
-                </Box>
+                Comment
               </TableCell>
             </TableRow>
           </TableHead>
@@ -1222,10 +1254,13 @@ export default function InspectionResults({
                         }}
                       >
                         <MenuItem value="">None</MenuItem>
-                        <MenuItem value="Low">Low</MenuItem>
-                        <MenuItem value="Medium">Medium</MenuItem>
-                        <MenuItem value="High">High</MenuItem>
-                        <MenuItem value="Critical">Critical</MenuItem>
+                        {configuredLevels
+                          .filter((option) => option !== "None")
+                          .map((option) => (
+                            <MenuItem key={option} value={option}>
+                              {option}
+                            </MenuItem>
+                          ))}
                       </Select>
                     </FormControl>
                   </TableCell>
@@ -1283,11 +1318,31 @@ export default function InspectionResults({
                             );
                           }}
                         >
-                          {COMMENT_OPTIONS.map((option) => (
+                          {configuredComments.map((option) => (
                             <MenuItem key={option} value={option}>
                               {option}
                             </MenuItem>
                           ))}
+
+                          {/* Persisted user comment (e.g. typed via
+                              double-click) that is not one of the configured
+                              options — render it so the Select value is
+                              always valid. */}
+                          {(() => {
+                            const current = getCommentValue(difference.id);
+                            if (
+                              current === "" ||
+                              current === "None" ||
+                              configuredComments.includes(current)
+                            ) {
+                              return null;
+                            }
+                            return (
+                              <MenuItem key={current} value={current}>
+                                {current}
+                              </MenuItem>
+                            );
+                          })()}
 
                           {customComments.length > 0 && (
                             <Divider sx={{ my: 0.5 }} />
@@ -1920,89 +1975,6 @@ export default function InspectionResults({
           Inspection report shared successfully.
         </Alert>
       </Snackbar>
-
-      {/* =========================================================
-          ADD COMMENT DIALOG
-         ========================================================= */}
-
-      <Dialog
-        open={addCommentOpen}
-        onClose={() => setAddCommentOpen(false)}
-        maxWidth="xs"
-        fullWidth
-      >
-        <DialogTitle
-          sx={{
-            fontWeight: 700,
-            color: "#2A276E",
-          }}
-        >
-          Add Comment
-        </DialogTitle>
-
-        <DialogContent>
-          <DialogContentText
-            sx={{
-              mb: 2,
-              color: "#50575e",
-            }}
-          >
-            Enter a comment. It will appear in the Comment dropdown for all
-            differences.
-          </DialogContentText>
-
-          <TextField
-            autoFocus
-            fullWidth
-            size="small"
-            label="Comment"
-            placeholder="Type your comment..."
-            value={newCommentText}
-            onChange={(event) => setNewCommentText(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                handleAddComment();
-              }
-            }}
-          />
-        </DialogContent>
-
-        <DialogActions
-          sx={{
-            px: 3,
-            pb: 2,
-          }}
-        >
-          <Button
-            onClick={() => {
-              setNewCommentText("");
-              setAddCommentOpen(false);
-            }}
-            sx={{
-              textTransform: "none",
-              color: "#50575e",
-            }}
-          >
-            Cancel
-          </Button>
-
-          <Button
-            variant="contained"
-            onClick={handleAddComment}
-            disabled={!newCommentText.trim()}
-            sx={{
-              textTransform: "none",
-              bgcolor: "#2A276E",
-              "&:hover": {
-                bgcolor: "#1f1d57",
-              },
-            }}
-          >
-            Add
-          </Button>
-        </DialogActions>
-      </Dialog>
 
       {/* =========================================================
           REPORT OPTIONS DIALOG (DOWNLOAD PDF)

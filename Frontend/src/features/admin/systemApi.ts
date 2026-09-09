@@ -34,14 +34,24 @@ api.interceptors.request.use((config) => {
 
 /**
  * True when the real admin backend doesn't serve the endpoint yet, so the
- * UI should fall back to its in-memory mock data. We treat ANY failure
- * (offline, 400/404/405, 5xx, etc.) as "backend not implemented"
- * because the deployed APIM/backend does not expose the admin/settings routes;
- * once a real admin backend is added it returns 2xx and its real data is used.
+ * UI should fall back to its in-memory mock data. Only a genuine network
+ * failure (no response) or a "not implemented / gateway" status (404, 405,
+ * 501-504) means the backend is unreachable. Real HTTP errors such as a 400
+ * validation error or a 403 authorization error indicate the backend IS
+ * running and returned a meaningful response — those must be surfaced to the
+ * user, never masked by mock data.
  */
 function isBackendUnavailable(error: unknown): boolean {
   if (axios.isAxiosError(error)) {
-    return !error.response || error.response.status >= 400;
+    return (
+      !error.response ||
+      error.response.status === 404 ||
+      error.response.status === 405 ||
+      error.response.status === 501 ||
+      error.response.status === 502 ||
+      error.response.status === 503 ||
+      error.response.status === 504
+    );
   }
   return false;
 }
@@ -105,6 +115,7 @@ export type CreateUserData = {
 };
 
 export type UpdateUserData = {
+  username: string;
   email: string;
   firstName: string;
   lastName: string;
@@ -136,21 +147,49 @@ export type AuditAction =
 
 export type AuditLog = {
   id: string;
-  date: string;
-  user: string;
-  action: AuditAction;
+  userId: string;
+  email: string;
+  accountType: string;
+  timestamp: string;
+  event: string;
+  action: string;
+  application: string;
   module: string;
-  description: string;
-  ipAddress: string;
-  status: "Success" | "Failed" | "Warning";
+  status: string;
+  description?: string;
+  entityType?: string;
+  entityId?: string;
+  inspectionId?: string;
+  fileId?: string;
+  fileName?: string;
+  masterFileName?: string;
+  sampleFileName?: string;
+  sessionId?: string;
+  ipAddress?: string;
+  userAgent?: string;
+  changes?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
 };
 
 export type AuditLogFilters = {
-  user?: string;
+  page?: number;
+  limit?: number;
+  startDate?: string;
+  endDate?: string;
+  userId?: string;
+  accountType?: string;
+  event?: string;
   module?: string;
-  action?: AuditAction;
-  status?: AuditLog["status"];
+  status?: string;
+  inspectionId?: string;
   search?: string;
+};
+
+export type AuditLogResponse = {
+  items: AuditLog[];
+  page: number;
+  limit: number;
+  total: number;
 };
 
 export type InspectionLevel = {
@@ -166,6 +205,50 @@ export type InspectionComment = {
   comment: string;
   description: string;
   active: boolean;
+};
+
+export type SetupLevels = {
+  default1: string;
+  default2: string;
+  custom1: string;
+  custom2: string;
+  custom3: string;
+  custom4: string;
+  custom5: string;
+};
+
+export type SetupComments = {
+  default1: string;
+  custom1: string;
+  custom2: string;
+  custom3: string;
+  custom4: string;
+  custom5: string;
+  custom6: string;
+  custom7: string;
+  custom8: string;
+  custom9: string;
+  custom10: string;
+};
+
+export type SetupLevelsComments = {
+  id: string;
+  type: string;
+  levels: SetupLevels;
+  comments: SetupComments;
+  version: number;
+  updatedAt: string;
+  updatedBy: string;
+};
+
+export type DifferenceComment = {
+  id: string;
+  inspectionId: string;
+  differenceId: number;
+  configuredComment: string;
+  userComment: string;
+  updatedAt?: string;
+  updatedBy?: string;
 };
 
 export type DictionaryEntry = {
@@ -205,17 +288,136 @@ const MOCK_USERS: User[] = [
   { id: "u2", username: "admin", email: "admin@viatris.com", firstName: "Admin", lastName: "User", accountType: "Administrator", accountStatus: "Active", company: "Viatris", lastLogin: "2026-08-31T14:05:00Z", passwordExpiry: "2026-11-01T00:00:00Z", createdAt: "2026-06-01T08:00:00Z", emailNotificationEnabled: false },
   { id: "u3", username: "ravi.kumar", email: "ravi.kumar@viatris.com", firstName: "Ravi", lastName: "Kumar", accountType: "user", accountStatus: "Active", company: "Viatris", lastLogin: "2026-08-29T11:40:00Z", passwordExpiry: "2026-09-30T00:00:00Z", createdAt: "2026-07-02T10:15:00Z", emailNotificationEnabled: true },
   { id: "u4", username: "priya.sharma", email: "priya.sharma@viatris.com", firstName: "Priya", lastName: "Sharma", accountType: "user", accountStatus: "Inactive", company: "Viatris", lastLogin: "2026-08-10T16:22:00Z", passwordExpiry: "2026-10-05T00:00:00Z", createdAt: "2026-07-20T12:00:00Z", emailNotificationEnabled: false },
+  { id: "u5", username: "yashwanth.kumar", email: "YashwanthKumar.k@viatris.com", firstName: "Yashwanth Kumar", lastName: "K", accountType: "user", accountStatus: "Active", company: "Viatris", lastLogin: null, passwordExpiry: "2026-12-02T00:00:00Z", createdAt: "2026-09-08T12:51:31Z", emailNotificationEnabled: true },
 ];
 
 const MOCK_LOGS: AuditLog[] = [
-  { id: "a1", date: "2026-09-01T09:40:12Z", user: "tejaswini.vangimalla", action: "LOGIN", module: "Authentication", description: "User logged in successfully", ipAddress: "10.20.30.41", status: "Success" },
-  { id: "a2", date: "2026-08-31T15:02:44Z", user: "admin", action: "CREATE_USER", module: "User Management", description: "Created user priya.sharma@viatris.com", ipAddress: "10.20.30.18", status: "Success" },
-  { id: "a3", date: "2026-08-31T14:55:03Z", user: "admin", action: "RESET_PASSWORD", module: "User Management", description: "Reset password for ravi.kumar@viatris.com", ipAddress: "10.20.30.18", status: "Success" },
-  { id: "a4", date: "2026-08-30T11:20:37Z", user: "ravi.kumar", action: "START_INSPECTION", module: "Text Inspection", description: "Started text inspection for master.pdf vs sample.pdf", ipAddress: "10.20.30.52", status: "Success" },
-  { id: "a5", date: "2026-08-30T11:26:09Z", user: "ravi.kumar", action: "DOWNLOAD_REPORT", module: "Text Inspection", description: "Downloaded PDF inspection report", ipAddress: "10.20.30.52", status: "Success" },
-  { id: "a6", date: "2026-08-29T17:44:51Z", user: "unknown", action: "LOGIN", module: "Authentication", description: "Failed login attempt (invalid password)", ipAddress: "192.168.5.7", status: "Failed" },
-  { id: "a7", date: "2026-08-29T10:05:20Z", user: "tejaswini.vangimalla", action: "CHANGE_SETTINGS", module: "System Setup", description: "Modified inspection severity levels", ipAddress: "10.20.30.41", status: "Success" },
-  { id: "a8", date: "2026-08-28T09:12:33Z", user: "admin", action: "GENERATE_API_TOKEN", module: "REST API", description: "Generated REST API token 'ci-integration'", ipAddress: "10.20.30.18", status: "Success" },
+  {
+    id: "a1",
+    userId: "u1",
+    email: "tejaswini.vangimalla@viatris.com",
+    accountType: "Administrator",
+    timestamp: "2026-09-01T09:40:12Z",
+    event: "LOGIN_SUCCESS",
+    action: "Login",
+    application: "MIT",
+    module: "Authentication",
+    description: "Successful login.",
+    ipAddress: "10.20.30.41",
+    status: "Success",
+  },
+  {
+    id: "a9",
+    userId: "u5",
+    email: "admin@viatris.com",
+    accountType: "Administrator",
+    timestamp: "2026-09-08T12:51:31Z",
+    event: "USER_CREATED",
+    action: "Create User",
+    application: "MIT",
+    module: "User Management",
+    description: "User created. Email=YashwanthKumar.k@viatris.com; Account Type=user",
+    ipAddress: "127.0.0.1",
+    status: "Success",
+  },
+  {
+    id: "a2",
+    userId: "u2",
+    email: "admin@viatris.com",
+    accountType: "Administrator",
+    timestamp: "2026-08-31T15:02:44Z",
+    event: "USER_CREATED",
+    action: "Create User",
+    application: "MIT",
+    module: "User Management",
+    description: "Created user priya.sharma@viatris.com",
+    ipAddress: "10.20.30.18",
+    status: "Success",
+  },
+  {
+    id: "a3",
+    userId: "u2",
+    email: "admin@viatris.com",
+    accountType: "Administrator",
+    timestamp: "2026-08-31T14:55:03Z",
+    event: "RESET_PASSWORD",
+    action: "Reset Password",
+    application: "MIT",
+    module: "User Management",
+    description: "Reset password for ravi.kumar@viatris.com",
+    ipAddress: "10.20.30.18",
+    status: "Success",
+  },
+  {
+    id: "a4",
+    userId: "u3",
+    email: "ravi.kumar@viatris.com",
+    accountType: "user",
+    timestamp: "2026-08-30T11:20:37Z",
+    event: "START_INSPECTION",
+    action: "Start Inspection",
+    application: "MIT",
+    module: "Text Inspection",
+    description: "Started text inspection for master.pdf vs sample.pdf",
+    ipAddress: "10.20.30.52",
+    status: "Success",
+  },
+  {
+    id: "a5",
+    userId: "u3",
+    email: "ravi.kumar@viatris.com",
+    accountType: "user",
+    timestamp: "2026-08-30T11:26:09Z",
+    event: "DOWNLOAD_REPORT",
+    action: "Download Report",
+    application: "MIT",
+    module: "Text Inspection",
+    description: "Downloaded PDF inspection report",
+    ipAddress: "10.20.30.52",
+    status: "Success",
+  },
+  {
+    id: "a6",
+    userId: "unknown",
+    email: "unknown@viatris.com",
+    accountType: "user",
+    timestamp: "2026-08-29T17:44:51Z",
+    event: "LOGIN_FAILED",
+    action: "Login",
+    application: "MIT",
+    module: "Authentication",
+    description: "Failed login attempt (invalid password)",
+    ipAddress: "192.168.5.7",
+    status: "Failed",
+  },
+  {
+    id: "a7",
+    userId: "u1",
+    email: "tejaswini.vangimalla@viatris.com",
+    accountType: "Administrator",
+    timestamp: "2026-08-29T10:05:20Z",
+    event: "CHANGE_SETTINGS",
+    action: "Change Settings",
+    application: "MIT",
+    module: "System Setup",
+    description: "Modified inspection severity levels",
+    ipAddress: "10.20.30.41",
+    status: "Success",
+  },
+  {
+    id: "a8",
+    userId: "u2",
+    email: "admin@viatris.com",
+    accountType: "Administrator",
+    timestamp: "2026-08-28T09:12:33Z",
+    event: "GENERATE_API_TOKEN",
+    action: "Generate API Token",
+    application: "MIT",
+    module: "REST API",
+    description: "Generated REST API token 'ci-integration'",
+    ipAddress: "10.20.30.18",
+    status: "Success",
+  },
 ];
 
 const MOCK_LEVELS: InspectionLevel[] = ["None", "Ignore All", "Critical", "Major", "Minor", "Not a Defect", "Pass"].map((name, i) => ({
@@ -247,6 +449,7 @@ const MOCK_PROFILES: Record<ProfileType, InspectionProfile[]> = {
 /* Fallback mock users used ONLY when the backend is completely unavailable.
    In normal operation, users are stored in and fetched from Cosmos DB via the backend API. */
 let mockUsers: User[] = [...MOCK_USERS];
+let mockAuditLogs: AuditLog[] = [...MOCK_LOGS];
 const mockLevels = [...MOCK_LEVELS];
 const mockComments = [...MOCK_COMMENTS];
 const mockDictionary = [...MOCK_DICTIONARY];
@@ -322,6 +525,31 @@ export async function getUser(id: string): Promise<User> {
   }
 }
 
+/**
+ * Add an audit log entry to the mock audit logs (fallback for offline mode).
+ * The actor is always the currently authenticated admin (from session).
+ */
+function addMockAuditLog(entry: Partial<AuditLog>): void {
+  const session = getSession();
+  const now = new Date().toISOString();
+  const logEntry: AuditLog = {
+    id: `mock_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    userId: session?.id ? String(session.id) : "unknown",
+    email: session?.email ?? "unknown@viatris.com",
+    accountType: session?.accountType ?? "Administrator",
+    timestamp: now,
+    event: "USER_CREATED",
+    action: "Create User",
+    application: "MIT",
+    module: "User Management",
+    description: "User action recorded.",
+    ipAddress: "127.0.0.1",
+    status: "Success",
+    ...entry,
+  };
+  mockAuditLogs = [logEntry, ...mockAuditLogs];
+}
+
 export async function createUser(data: CreateUserData): Promise<User> {
   // Email is the unique identifier for a user account — check for duplicates
   // (across both backend and locally-created users) BEFORE creating.
@@ -363,7 +591,22 @@ export async function createUser(data: CreateUserData): Promise<User> {
         createdAt: new Date().toISOString(),
         emailNotificationEnabled: data.emailNotificationEnabled ?? true,
       };
-      mockUsers = [user, ...mockUsers];
+            mockUsers = [user, ...mockUsers];
+      addMockAuditLog({
+        event: "USER_CREATED",
+        action: "Create User",
+        module: "User Management",
+        description: `User created. Email=${data.email}; Account Type=${data.accountType}`,
+        entityType: "User",
+        entityId: user.id,
+        status: "Success",
+        metadata: {
+          newUserEmail: data.email,
+          newAccountType: data.accountType,
+          newAccountStatus: data.accountStatus,
+          createdUserId: user.id,
+        },
+      });
     } else {
       throw new Error(getErrorMessage(error));
     }
@@ -374,15 +617,25 @@ export async function createUser(data: CreateUserData): Promise<User> {
 
 export async function updateUser(id: string, data: UpdateUserData): Promise<User> {
   let updated: User;
+  let originalUser: User | undefined;
+
+  // Capture original user for change tracking (mock fallback)
+  const mockUserIndex = mockUsers.findIndex((u) => u.id === id);
+  if (mockUserIndex !== -1) {
+    originalUser = { ...mockUsers[mockUserIndex] };
+  }
 
   try {
     updated = await updateResource<User>("users", id, data);
   } catch (error) {
     if (isBackendUnavailable(error)) {
-      const index = mockUsers.findIndex((u) => u.id === id);
-      if (index === -1) throw makeApiError(new Error("User not found."), "User not found.");
-      mockUsers[index] = { ...mockUsers[index], ...data };
-      updated = mockUsers[index];
+      if (mockUserIndex === -1)
+        throw makeApiError(
+          new Error("Backend unavailable and this user is not in the local cache. Unable to update."),
+          "Backend unavailable. Unable to update this user."
+        );
+      mockUsers[mockUserIndex] = { ...mockUsers[mockUserIndex], ...data };
+      updated = mockUsers[mockUserIndex];
     } else {
       throw new Error(getErrorMessage(error));
     }
@@ -394,6 +647,34 @@ export async function updateUser(id: string, data: UpdateUserData): Promise<User
   if (mockIndex !== -1) {
     mockUsers[mockIndex] = { ...mockUsers[mockIndex], ...data, id: mockUsers[mockIndex].id };
     updated = mockUsers[mockIndex];
+  }
+
+  // Add audit log entries for mock/fallback mode
+  if (originalUser && data.accountType && originalUser.accountType !== data.accountType) {
+    addMockAuditLog({
+      event: "ACCOUNT_TYPE_CHANGED",
+      action: "Change Account Type",
+      module: "User Management",
+      description: `Account type changed from ${originalUser.accountType} to ${data.accountType}. User=${updated.email}`,
+      entityType: "User",
+      entityId: id,
+      status: "Success",
+      metadata: {
+        previousAccountType: originalUser.accountType,
+        newAccountType: data.accountType,
+        affectedUserEmail: updated.email,
+      },
+    });
+  } else if (originalUser) {
+    addMockAuditLog({
+      event: "USER_UPDATED",
+      action: "Update User",
+      module: "User Management",
+      description: `User updated. Email=${updated.email}`,
+      entityType: "User",
+      entityId: id,
+      status: "Success",
+    });
   }
 
   return updated;
@@ -525,17 +806,139 @@ export async function terminateSession(id: string): Promise<void> {
 
 /* ---------- Audit trail ---------- */
 
-export async function getAuditLogs(filters?: AuditLogFilters): Promise<AuditLog[]> {
+export async function getAuditLogs(filters?: AuditLogFilters): Promise<AuditLogResponse> {
   try {
-    const res = await api.get<AuditLog[]>("/api/audit-logs", { params: filters });
+    const res = await api.get<AuditLogResponse>("/api/audit-logs", { params: filters });
     return res.data;
   } catch (error) {
     if (isBackendUnavailable(error)) {
       await delay(200);
-      return [...MOCK_LOGS];
+            // Return paginated mock data as fallback
+      const mockItems = [...mockAuditLogs] as unknown as AuditLog[];
+      return {
+        items: mockItems,
+        page: 1,
+        limit: mockItems.length,
+        total: mockItems.length,
+      };
     }
     throw new Error(getErrorMessage(error));
   }
+}
+
+export async function getAuditLogById(id: string): Promise<AuditLog> {
+  try {
+    const res = await api.get<AuditLog>(`/api/audit-logs/${id}`);
+    return res.data;
+  } catch (error) {
+    if (isBackendUnavailable(error)) {
+      await delay(200);
+            const found = mockAuditLogs.find((log) => log.id === id);
+      if (found) return found as unknown as AuditLog;
+      throw new Error("Audit log not found.");
+    }
+    throw new Error(getErrorMessage(error));
+  }
+}
+
+/* ---------- Setup Levels and Comments ---------- */
+
+const DEFAULT_SETUP_LEVELS_COMMENTS: SetupLevelsComments = {
+  id: "setup-levels-comments",
+  type: "setup-levels-comments",
+  levels: {
+    default1: "None",
+    default2: "Ignore All",
+    custom1: "Critical",
+    custom2: "Major",
+    custom3: "Minor",
+    custom4: "Not a Defect",
+    custom5: "Fail",
+  },
+  comments: {
+    default1: "Reviewed",
+    custom1: "Approved",
+    custom2: "To be verified",
+    custom3: "None",
+    custom4: "Comment1",
+    custom5: "Comment2",
+    custom6: "Comment3",
+    custom7: "Comment 4",
+    custom8: "",
+    custom9: "",
+    custom10: "",
+  },
+  version: 1,
+  updatedAt: "",
+  updatedBy: "system",
+};
+
+let mockSetupLevelsComments: SetupLevelsComments = {
+  ...DEFAULT_SETUP_LEVELS_COMMENTS,
+  levels: { ...DEFAULT_SETUP_LEVELS_COMMENTS.levels },
+  comments: { ...DEFAULT_SETUP_LEVELS_COMMENTS.comments },
+};
+
+export async function getSetupLevelsComments(): Promise<SetupLevelsComments> {
+  try {
+    const res = await api.get<SetupLevelsComments>("/api/setup/levels-comments");
+    return res.data;
+  } catch (error) {
+    if (isBackendUnavailable(error)) {
+      await delay(200);
+      return { ...mockSetupLevelsComments, levels: { ...mockSetupLevelsComments.levels }, comments: { ...mockSetupLevelsComments.comments } };
+    }
+    throw new Error(getErrorMessage(error));
+  }
+}
+
+export async function updateSetupLevelsComments(
+  data: Pick<SetupLevelsComments, "levels" | "comments">
+): Promise<SetupLevelsComments> {
+  try {
+    const res = await api.put<SetupLevelsComments>("/api/setup/levels-comments", data);
+    mockSetupLevelsComments = { ...res.data, levels: { ...res.data.levels }, comments: { ...res.data.comments } };
+    return res.data;
+  } catch (error) {
+    if (isBackendUnavailable(error)) {
+      mockSetupLevelsComments = {
+        ...mockSetupLevelsComments,
+        levels: { ...mockSetupLevelsComments.levels, ...data.levels },
+        comments: { ...mockSetupLevelsComments.comments, ...data.comments },
+        version: (mockSetupLevelsComments.version || 1) + 1,
+      };
+      return { ...mockSetupLevelsComments };
+    }
+    throw new Error(getErrorMessage(error));
+  }
+}
+
+/* ---------- Difference comments (persisted per inspection) ---------- */
+
+export async function getInspectionDifferenceComments(
+  inspectionId: string
+): Promise<DifferenceComment[]> {
+  try {
+    const res = await api.get<DifferenceComment[]>(
+      `/api/inspections/${encodeURIComponent(inspectionId)}/comments`
+    );
+    return res.data;
+  } catch (error) {
+    if (isBackendUnavailable(error)) return [];
+    throw new Error(getErrorMessage(error));
+  }
+}
+
+export async function updateInspectionDifferenceComment(
+  inspectionId: string,
+  differenceId: number,
+  payload: { configuredComment: string; userComment: string }
+): Promise<DifferenceComment> {
+  const res = await api.put<DifferenceComment>(
+    `/api/inspections/${encodeURIComponent(inspectionId)}/differences/${differenceId}/comment`,
+    payload
+  );
+  return res.data;
 }
 
 /* ---------- Levels ---------- */

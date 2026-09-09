@@ -47,6 +47,10 @@ import { ConfirmDialog, DetailDialog, SnackBar, type Snack } from "../components
 
 /** Only two account types exist: "user" and "Administrator". */
 const ACCOUNT_TYPES: AccountTypeOption[] = ["user", "Administrator"];
+
+/** Normalize account type strings coming from the backend ("User") to the select option ("user"). */
+const normalizeAccountType = (value: string): AccountTypeOption =>
+  value.trim().toLowerCase() === "administrator" ? "Administrator" : "user";
 const STATUSES: UserStatus[] = ["Active", "Inactive", "Locked"];
 const COLUMNS = [
   "Username",
@@ -124,7 +128,7 @@ function UserFormDialog({
               email: user.email,
               firstName: user.firstName,
               lastName: user.lastName,
-              accountType: user.accountType,
+              accountType: normalizeAccountType(user.accountType),
               company: user.company,
               accountStatus: user.accountStatus,
               password: "",
@@ -153,6 +157,7 @@ function UserFormDialog({
     try {
       if (user) {
         await updateUser(user.id, {
+          username: values.username,
           email: values.email,
           firstName: values.firstName,
           lastName: values.lastName,
@@ -187,7 +192,7 @@ function UserFormDialog({
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle sx={{ fontWeight: 700, color: BRAND_NAVY }}>{user ? "Edit User" : "Add User"}</DialogTitle>
+      <DialogTitle sx={{ fontWeight: 700, color: "#fff", bgcolor: BRAND_NAVY, py: 2.5, borderBottom: "1px solid rgba(255,255,255,.12)" }}>{user ? "Edit User" : "Add User"}</DialogTitle>
       <DialogContent dividers>
         {error && (
           <Typography color="error" variant="body2" sx={{ mb: 2 }}>
@@ -207,9 +212,8 @@ function UserFormDialog({
                 {...field}
                 label="Username *"
                 size="small"
-                disabled={Boolean(user)}
                 error={Boolean(errors.username)}
-                helperText={errors.username?.message ?? (user ? "Username cannot be changed." : " ")}
+                helperText={errors.username?.message ?? " "}
               />
             )}
           />
@@ -231,8 +235,9 @@ function UserFormDialog({
                 {...field}
                 label="Email *"
                 size="small"
+                disabled={Boolean(user)}
                 error={Boolean(errors.email)}
-                helperText={errors.email?.message ?? " "}
+                helperText={errors.email?.message ?? (user ? "Email cannot be changed." : " ")}
               />
             )}
           />
@@ -363,7 +368,7 @@ function UserFormDialog({
         <Button onClick={onClose} color="inherit">
           Cancel
         </Button>
-        <Button onClick={handleSubmit(save)} variant="contained" disabled={busy} sx={{ bgcolor: BRAND_NAVY }}>
+        <Button onClick={handleSubmit(save)} variant="contained" disabled={busy} sx={{ background: "linear-gradient(135deg,#2A276E,#3F3B99)", borderRadius: 2, px: 3, "&:hover": { background: "linear-gradient(135deg,#242162,#2A276E)" } }}>
           {busy ? <CircularProgress size={20} color="inherit" /> : "Save"}
         </Button>
       </DialogActions>
@@ -461,8 +466,8 @@ export default function UserManagementPage() {
     : [];
 
   return (
-    <Box sx={{ p: { xs: 2, md: 3 } }}>
-      <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mb: 2 }}>
+    <Box sx={{ p: { xs: 2, md: 4 }, background: "linear-gradient(180deg,#F7F8FC 0%,#EEF1FA 100%)", minHeight: "100vh" }}>
+      <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mb: 3, p: 3, borderRadius: 3, bgcolor: "#fff", boxShadow: "0 10px 30px rgba(42,39,110,.08)" }}>
         <Typography variant="h4" sx={{ fontWeight: 700, color: BRAND_NAVY }}>
           User Management
         </Typography>
@@ -473,7 +478,7 @@ export default function UserManagementPage() {
             setEditUser(null);
             setFormOpen(true);
           }}
-          sx={{ bgcolor: BRAND_NAVY, "&:hover": { bgcolor: "#1E1B54" } }}
+          sx={{ background: "linear-gradient(135deg,#2A276E,#3F3B99)", px: 3, py: 1.2, borderRadius: 2.5, boxShadow: "0 8px 24px rgba(42,39,110,.25)", transition: "all .25s ease", "&:hover": { transform: "translateY(-2px)", boxShadow: "0 12px 30px rgba(42,39,110,.35)", background: "linear-gradient(135deg,#242162,#2A276E)" } }}
         >
           Add User
         </Button>
@@ -485,10 +490,10 @@ export default function UserManagementPage() {
         </Typography>
       )}
 
-      <TableContainer sx={{ border: "1px solid #E0E0E6", borderRadius: 2, bgcolor: "#fff" }}>
+      <TableContainer sx={{ border: "1px solid rgba(42,39,110,.08)", borderRadius: 3, bgcolor: "#fff", overflow: "hidden", boxShadow: "0 12px 35px rgba(42,39,110,.08)" }}>
         <Table size="small">
           <TableHead>
-            <TableRow sx={{ bgcolor: "#F5F6FA" }}>
+            <TableRow sx={{ bgcolor: "#F4F5FB" }}>
               {COLUMNS.map((header) => (
                 <TableCell key={header} sx={{ fontWeight: 700, color: BRAND_NAVY, whiteSpace: "nowrap" }}>
                   {header}
@@ -511,7 +516,7 @@ export default function UserManagementPage() {
               </TableRow>
             ) : (
               paged.map((user) => (
-                <TableRow key={user.id} hover>
+                <TableRow key={user.id} hover sx={{ transition: "all .2s ease", "&:hover": { bgcolor: "rgba(42,39,110,.04)", transform: "scale(1.001)" } }}>
                   <TableCell sx={{ fontWeight: 600 }}>{user.username}</TableCell>
                   <TableCell>{user.email}</TableCell>
                   <TableCell>{user.firstName}</TableCell>
