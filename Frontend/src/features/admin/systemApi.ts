@@ -841,6 +841,37 @@ export async function getAuditLogById(id: string): Promise<AuditLog> {
   }
 }
 
+/** Payload for recording a frontend-initiated activity in the audit trail. */
+export type ClientAuditEvent = {
+  /** One of the event names allowed by the backend audit endpoint. */
+  event: string;
+  /** Human-readable action verb, e.g. "Select Level". */
+  action: string;
+  /** Module name the event belongs to, e.g. "Text Inspection". */
+  module: string;
+  description?: string;
+  inspectionId?: string;
+  differenceId?: number;
+  metadata?: Record<string, unknown>;
+};
+
+/**
+ * Record a frontend-initiated activity event (level/comment selection,
+ * report download, difference list view, ...) in the audit trail.
+ *
+ * The backend derives the authenticated identity from the request context,
+ * so this is fire-and-forget from the UI's perspective: an audit failure
+ * must never block the user's action.
+ */
+export async function logAuditEvent(payload: ClientAuditEvent): Promise<void> {
+  try {
+    await api.post("/api/audit/events", payload);
+  } catch (error) {
+    // Audit is best-effort — never surface errors to the user, never block.
+    console.warn("[AUDIT] Failed to record client audit event:", getErrorMessage(error));
+  }
+}
+
 /* ---------- Setup Levels and Comments ---------- */
 
 const DEFAULT_SETUP_LEVELS_COMMENTS: SetupLevelsComments = {

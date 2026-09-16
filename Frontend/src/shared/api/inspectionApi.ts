@@ -381,6 +381,77 @@ export async function startInspection(
 /* Backward-compatibility re-exports                                          */
 /* -------------------------------------------------------------------------- */
 /*
+/* -------------------------------------------------------------------------- */
+/*                        Crop Compare (region-scoped run)                    */
+/* -------------------------------------------------------------------------- */
+
+export type CropFinding = {
+  id: number;
+  type: string;
+  master: string;
+  sample: string;
+  comment: string;
+  page: number;
+  master_box: BoundingBox | null;
+  sample_box: BoundingBox | null;
+  source: string;
+};
+
+export type CropRunResult = {
+  findings: CropFinding[];
+  match_stats: {
+    matched_pairs: number;
+    unmatched_master: number;
+    unmatched_sample: number;
+  };
+  region: { page: number; box_px: BoundingBox };
+  log_file?: string | null;
+};
+
+export type CropInspectOptions = {
+  /**
+   * Engine session id (fresh run). For a persisted inspection, pass
+   * `inspectionId` instead — the backend owner-verifies it and downloads
+   * the master/sample files from Blob Storage if the local engine copy
+   * is missing, so Crop Compare works on reopened results too.
+   */
+  sessionId?: string;
+  inspectionId?: string;
+  /** 0-based page number the crop was drawn on. */
+  page: number;
+  /** Crop box in DPI-150 pixel space (same space as finding boxes). */
+  box: BoundingBox;
+};
+
+/**
+ * Runs the crop-scoped Text Inspection on a region of a single page and
+ * returns findings in the same pixel-space shape as the full run.
+ */
+export async function cropInspect(
+  options: CropInspectOptions
+): Promise<CropRunResult> {
+  const response = await axios.post(
+    `${API_BASE_URL}/api/crop_inspect`,
+    {
+      ...(options.sessionId ? { session_id: options.sessionId } : {}),
+      ...(options.inspectionId ? { inspection_id: options.inspectionId } : {}),
+      page: options.page,
+      box: options.box,
+    },
+    {
+      // Persisted-inspection resolution requires the authenticated
+      // identity header (same requirement as /api/inspect).
+      headers: identityHeaders(),
+    }
+  );
+  return response.data as CropRunResult;
+}
+
+
+/* -------------------------------------------------------------------------- */
+/* Backward-compatibility re-exports                                          */
+/* -------------------------------------------------------------------------- */
+/*
  * Old code that hasn't been migrated yet can still import the old names.
  * Remove these aliases once all consumers have been updated.
  */

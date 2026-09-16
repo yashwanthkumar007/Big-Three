@@ -30,7 +30,10 @@ import {
   configuredCommentOptions,
   isEditableCommentPlaceholder,
 } from "@/shared/utils/setupLevels";
-import { updateInspectionDifferenceComment } from "@/features/admin/systemApi";
+import {
+  logAuditEvent,
+  updateInspectionDifferenceComment,
+} from "@/features/admin/systemApi";
 
 export default function DifferenceListPage() {
   /* ------------------------------------------------------------------ */
@@ -134,6 +137,17 @@ export default function DifferenceListPage() {
       ...levelSelections,
       [differenceId]: value,
     });
+
+    // Audit: record level assignment on a difference (best-effort).
+    void logAuditEvent({
+      event: "DIFFERENCE_LEVEL_CHANGED",
+      action: "Update Level",
+      module: "Text Inspection",
+      description: `Level updated for difference ${differenceId} to "${value}".`,
+      inspectionId: sessionId ?? undefined,
+      differenceId,
+      metadata: { level: value },
+    });
   };
 
   const handleCommentChange = (differenceId: number, value: string) => {
@@ -144,6 +158,17 @@ export default function DifferenceListPage() {
     setCommentSelections({
       ...commentSelections,
       [differenceId]: value,
+    });
+
+    // Audit: record comment/status selection on a difference (best-effort).
+    void logAuditEvent({
+      event: "DIFFERENCE_COMMENT_UPDATED",
+      action: "Update Difference Comment",
+      module: "Text Inspection",
+      description: `Comment updated for difference ${differenceId} to "${value}".`,
+      inspectionId: sessionId ?? undefined,
+      differenceId,
+      metadata: { comment: value },
     });
   };
 

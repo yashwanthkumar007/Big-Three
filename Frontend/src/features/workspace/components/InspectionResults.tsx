@@ -51,13 +51,18 @@ import SwapHorizIcon from "@mui/icons-material/SwapHoriz";
 import FormatListBulletedIcon from "@mui/icons-material/FormatListBulleted";
 import DownloadIcon from "@mui/icons-material/Download";
 import CompareIcon from "@mui/icons-material/Compare";
+import CropFreeIcon from "@mui/icons-material/CropFree";
 
 import ViewerPane from "./ViewerPane";
 import ReportOptionsDialog, {
   type ReportOptions,
 } from "./ReportOptionsDialog";
 import type { BoundingBox } from "@/shared/api/inspectionApi";
-import { shareInspectionReport } from "@/shared/api/inspectionApi";
+import {
+  cropInspect,
+  shareInspectionReport,
+  type CropRunResult,
+} from "@/shared/api/inspectionApi";
 import { truncateFileName } from "@/shared/utils/truncateFileName";
 import { getSession } from "@/shared/utils/auth";
 import {
@@ -76,6 +81,7 @@ import {
 } from "@/shared/utils/setupLevels";
 import {
   getInspectionDifferenceComments,
+  logAuditEvent,
   updateInspectionDifferenceComment,
 } from "@/features/admin/systemApi";
 
@@ -87,8 +93,10 @@ export type DifferenceType =
   | "Location"
   | "Case"
   | "Bold"
+  | "Italic"
   | "Color"
   | "Font Type"
+  | "Mixed Font"
   | "Size"
   | "Sub/Super"
   | "Underline"
@@ -300,13 +308,13 @@ export default function InspectionResults({
     result.differences.find((difference) => difference.id === effectiveSelectedId) ??
     null;
 
-  const handleSelect = (difference: InspectionDifference) => {
+  const handleSelect = useCallback((difference: InspectionDifference) => {
     if (onDifferenceSelect) {
       onDifferenceSelect(difference);
     } else {
       setInternalSelectedId(difference.id);
     }
-  };
+  }, [onDifferenceSelect]);
 
   const differenceCount = result.totalDifferences;
 
@@ -368,6 +376,17 @@ export default function InspectionResults({
       ...commentSelections,
       [differenceId]: value,
     });
+
+    // Audit: record comment/status selection on a difference (best-effort).
+    void logAuditEvent({
+      event: "DIFFERENCE_COMMENT_UPDATED",
+      action: "Update Difference Comment",
+      module: "Text Inspection",
+      description: `Comment updated for difference ${differenceId} to "${value}".`,
+      inspectionId: result.inspectionId,
+      differenceId,
+      metadata: { comment: value },
+    });
   };
 
   const getLevelValue = (differenceId: number) =>
@@ -377,6 +396,17 @@ export default function InspectionResults({
     setLevelSelections({
       ...levelSelections,
       [differenceId]: value,
+    });
+
+    // Audit: record level assignment on a difference (best-effort).
+    void logAuditEvent({
+      event: "DIFFERENCE_LEVEL_CHANGED",
+      action: "Update Level",
+      module: "Text Inspection",
+      description: `Level updated for difference ${differenceId} to "${value}".`,
+      inspectionId: result.inspectionId,
+      differenceId,
+      metadata: { level: value },
     });
   };
 
@@ -639,6 +669,16 @@ export default function InspectionResults({
     console.log("[DIFFERENCE LIST] Current Level values:", levelSelections);
     console.log("[DIFFERENCE LIST] Current Comment values:", commentSelections);
 
+    // Audit: record that the user opened/viewed the Difference List.
+    void logAuditEvent({
+      event: "DIFFERENCE_VIEWED",
+      action: "View Difference List",
+      module: "Text Inspection",
+      description: `Difference list opened. Inspection ID=${result.inspectionId}`,
+      inspectionId: result.inspectionId,
+      metadata: { totalDifferences: result.differences.length },
+    });
+
     // If a window is already open, focus it instead of opening a duplicate
     if (differenceListWindowRef.current && !differenceListWindowRef.current.closed) {
       console.log("[DIFFERENCE LIST] Existing window status: open");
@@ -724,16 +764,16 @@ export default function InspectionResults({
       )
     : -1;
 
-  const handlePreviousDifference = () => {
+  const handlePreviousDifference = useCallback(() => {
     if (currentDifferenceIndex <= 0) {
       return;
     }
 
     const prev = result.differences[currentDifferenceIndex - 1];
     handleSelect(prev);
-  };
+  }, [currentDifferenceIndex, result.differences, handleSelect]);
 
-  const handleNextDifference = () => {
+  const handleNextDifference = useCallback(() => {
     if (
       currentDifferenceIndex < 0 ||
       currentDifferenceIndex >= result.differences.length - 1
@@ -743,7 +783,7 @@ export default function InspectionResults({
 
     const next = result.differences[currentDifferenceIndex + 1];
     handleSelect(next);
-  };
+  }, [currentDifferenceIndex, result.differences, handleSelect]);
 
   /* ------------------------------------------------------------------ */
   /* Keyboard navigation (ArrowLeft / ArrowRight)                       */
@@ -763,7 +803,7 @@ export default function InspectionResults({
         handleNextDifference();
       }
     },
-    [selectedDifferenceData, currentDifferenceIndex, result.differences]
+    [selectedDifferenceData, handlePreviousDifference, handleNextDifference]
   );
 
   useEffect(() => {
@@ -772,6 +812,64 @@ export default function InspectionResults({
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [handleKeyDown]);
+
+  /* ------------------------------------------------------------------ */
+  /* Crop Compare — region-scoped re-inspection of the Master page      */
+  /* ------------------------------------------------------------------ */
+
+  const [cropMode, setCropMode] = useState(false);
+  const [cropRunning, setCropRunning] = useState(false);
+  const [cropDialogOpen, setCropDialogOpen] = useState(false);
+  const [cropError, setCropError] = useState<string | null>(null);
+  const [cropRegion, setCropRegion] = useState<{
+    page: number;
+    box: BoundingBox;
+  } | null>(null);
+  const [cropResult, setCropResult] = useState<CropRunResult | null>(null);
+
+  /**
+   * Called by the Master PdfViewer when the user finishes dragging a
+   * crop rectangle. Runs the crop-scoped backend pipeline and opens the
+   * Crop Results dialog (kept separate from the full-page difference
+   * table so crop output never mixes into the main findings list).
+   */
+  const handleCropComplete = useCallback(
+    (page0Based: number, box: BoundingBox) => {
+      setCropRegion({ page: page0Based, box });
+      setCropDialogOpen(true);
+      setCropError(null);
+      setCropRunning(true);
+      setCropResult(null);
+
+      cropInspect({
+        inspectionId: result.inspectionId,
+        page: page0Based,
+        box,
+      })
+        .then((data) => {
+          setCropResult(data);
+        })
+        .catch((error: unknown) => {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          setCropError(message);
+        })
+        .finally(() => {
+          setCropRunning(false);
+        });
+    },
+    [result.inspectionId]
+  );
+
+  const handleToggleCropMode = () => {
+    setCropMode((previous) => {
+      if (previous) {
+        // Leaving crop mode: dismiss any open crop dialog too.
+        setCropDialogOpen(false);
+      }
+      return !previous;
+    });
+  };
 
   /* ------------------------------------------------------------------ */
   /* Debug logs                                                         */
@@ -1047,6 +1145,35 @@ export default function InspectionResults({
         <IconButton size="small">
           <VisibilityOffTwoToneIcon fontSize="small" />
         </IconButton>
+
+        {/* Crop Compare — drag a region on the Master page to re-inspect
+            just that region. Text inspection only (the crop pipeline is
+            the text comparison engine). */}
+        {result.inspectionType === "text" && (
+          <Tooltip
+            title={
+              cropMode
+                ? "Crop Compare ON — drag a rectangle on the Master page (click to turn off)"
+                : "Crop Compare — drag a rectangle on the Master page to inspect just that region"
+            }
+            arrow
+          >
+            <IconButton
+              size="small"
+              onClick={handleToggleCropMode}
+              sx={{
+                bgcolor: cropMode ? "#6a1b9a" : "#2A276E",
+                color: "#ffffff",
+                mx: 0.25,
+                "&:hover": {
+                  bgcolor: cropMode ? "#4a148c" : "#1f1d57",
+                },
+              }}
+            >
+              <CropFreeIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        )}
 
         <Box sx={{ flex: 1 }} />
 
@@ -1520,6 +1647,8 @@ export default function InspectionResults({
                 (p) => p.page === (selectedDifferenceData?.page ?? 0)
               )?.masterHeight
             }
+            cropMode={cropMode}
+            onCropComplete={handleCropComplete}
           />
         </Box>
 
@@ -1975,6 +2104,169 @@ export default function InspectionResults({
           Inspection report shared successfully.
         </Alert>
       </Snackbar>
+
+      {/* =========================================================
+          CROP COMPARE RESULTS DIALOG
+          Shows region-scoped findings from the crop pipeline — kept
+          separate from the main full-page difference table.
+         ========================================================= */}
+
+      <Dialog
+        open={cropDialogOpen}
+        onClose={() => setCropDialogOpen(false)}
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            bgcolor: "#2A276E",
+            color: "#ffffff",
+          }}
+        >
+          <Box>
+            <Typography variant="h6" sx={{ fontWeight: 700 }}>
+              Crop Compare Results
+            </Typography>
+            {cropRegion && (
+              <Typography variant="caption" sx={{ opacity: 0.85 }}>
+                Page {cropRegion.page + 1} · region x=
+                {Math.round(cropRegion.box.x)}, y=
+                {Math.round(cropRegion.box.y)}, w=
+                {Math.round(cropRegion.box.width)}, h=
+                {Math.round(cropRegion.box.height)} px (DPI 150)
+              </Typography>
+            )}
+          </Box>
+          <IconButton
+            size="small"
+            onClick={() => setCropDialogOpen(false)}
+            sx={{ color: "#ffffff" }}
+          >
+            <CloseIcon fontSize="small" />
+          </IconButton>
+        </DialogTitle>
+
+        <DialogContent dividers sx={{ p: 0 }}>
+          {cropRunning ? (
+            <Box sx={{ py: 6, textAlign: "center" }}>
+              <CircularProgress size={32} />
+              <Typography sx={{ mt: 2 }} color="text.secondary">
+                Running crop inspection…
+              </Typography>
+            </Box>
+          ) : cropError ? (
+            <Alert severity="error" sx={{ m: 2 }}>
+              {cropError}
+            </Alert>
+          ) : cropResult ? (
+            <Box>
+              <Box
+                sx={{
+                  px: 2,
+                  py: 1.5,
+                  bgcolor: "#f7f8f9",
+                  borderBottom: "1px solid #e0e0e0",
+                }}
+              >
+                <Typography
+                  variant="body2"
+                  sx={{ fontWeight: 600, color: "#3f4650" }}
+                >
+                  {cropResult.findings.length}{" "}
+                  {cropResult.findings.length === 1 ? "finding" : "findings"} in
+                  the cropped region — matched{" "}
+                  {cropResult.match_stats.matched_pairs} pairs,{" "}
+                  {cropResult.match_stats.unmatched_master} missing in sample,{" "}
+                  {cropResult.match_stats.unmatched_sample} extra in sample
+                </Typography>
+                {cropResult.log_file && (
+                  <Typography variant="caption" color="text.secondary">
+                    Logged to: {cropResult.log_file}
+                  </Typography>
+                )}
+              </Box>
+
+              {cropResult.findings.length === 0 ? (
+                <Box sx={{ py: 5, textAlign: "center" }}>
+                  <Typography color="text.secondary">
+                    No differences found in the cropped region.
+                  </Typography>
+                </Box>
+              ) : (
+                <TableContainer sx={{ maxHeight: 380 }}>
+                  <Table stickyHeader size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell
+                          sx={{ fontWeight: 700, color: "#50575e", width: 80 }}
+                        >
+                          Type
+                        </TableCell>
+                        <TableCell sx={{ fontWeight: 700, color: "#50575e" }}>
+                          Master
+                        </TableCell>
+                        <TableCell sx={{ fontWeight: 700, color: "#50575e" }}>
+                          Sample
+                        </TableCell>
+                        <TableCell sx={{ fontWeight: 700, color: "#50575e" }}>
+                          Comment
+                        </TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {cropResult.findings.map((finding) => (
+                        <TableRow key={finding.id} hover>
+                          <TableCell>
+                            <Typography
+                              sx={{
+                                fontSize: 12,
+                                fontWeight: 700,
+                                color: "#6a1b9a",
+                                bgcolor: "rgba(106, 27, 154, 0.08)",
+                                borderRadius: 1,
+                                px: 0.75,
+                                py: 0.25,
+                                display: "inline-block",
+                              }}
+                            >
+                              {finding.type}
+                            </Typography>
+                          </TableCell>
+                          <TableCell
+                            sx={{ maxWidth: 220, wordBreak: "break-word" }}
+                          >
+                            {finding.master || "(none)"}
+                          </TableCell>
+                          <TableCell
+                            sx={{ maxWidth: 220, wordBreak: "break-word" }}
+                          >
+                            {finding.sample || "(none)"}
+                          </TableCell>
+                          <TableCell sx={{ wordBreak: "break-word" }}>
+                            {finding.comment}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              )}
+            </Box>
+          ) : null}
+        </DialogContent>
+
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button
+            onClick={() => setCropDialogOpen(false)}
+            sx={{ textTransform: "none", color: "#50575e" }}
+          >
+            Close
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {/* =========================================================
           REPORT OPTIONS DIALOG (DOWNLOAD PDF)

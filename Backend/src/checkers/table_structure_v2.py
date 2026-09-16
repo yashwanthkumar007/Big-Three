@@ -312,6 +312,8 @@ def check_table_rows_v2(
     master_extra_lines: list = None,
     sample_extra_lines: list = None,
     enabled_types: list = None,
+    master_rows: list = None,
+    sample_rows: list = None,
 ) -> list:
     """
     master_extra_lines / sample_extra_lines: optional Doc Intelligence
@@ -322,9 +324,17 @@ def check_table_rows_v2(
     all types are produced. Disabled types are skipped at every emission
     point (value diff, label location, unmatched rows) so the table
     checker never produces findings the user filtered out.
+
+    master_rows / sample_rows: optional already-extracted rows (from
+    extract_table_rows). When provided, the PDF is NOT reopened — the
+    caller (comparison_pipeline) extracts the table once and reuses the
+    same rows for both region-exclusion and the table checker, avoiding
+    a second expensive get_drawings()/get_text() parse of each file.
     """
-    master_rows = extract_table_rows(master_pdf_path, page_number, extra_lines=master_extra_lines)
-    sample_rows = extract_table_rows(sample_pdf_path, page_number, extra_lines=sample_extra_lines)
+    if master_rows is None:
+        master_rows = extract_table_rows(master_pdf_path, page_number, extra_lines=master_extra_lines)
+    if sample_rows is None:
+        sample_rows = extract_table_rows(sample_pdf_path, page_number, extra_lines=sample_extra_lines)
 
     if enabled_types is None:
         enabled_types = ["Change", "Deletion", "Insertion", "Location"]

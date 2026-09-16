@@ -33,6 +33,15 @@ type PdfViewerProps = {
   pageNumber?: number;
   zoom?: number;
   onNumPagesChange?: (numPages: number) => void;
+  /**
+   * Crop Compare mode — when true (master side only), the user can drag
+   * a rectangle directly on the rendered page. On mouse-up the box is
+   * converted to DPI-150 pixel space (the same space the backend's
+   * finding boxes use) and reported via onCropComplete together with
+   * the 0-based page number it was drawn on.
+   */
+  cropMode?: boolean;
+  onCropComplete?: (page0Based: number, box: BoundingBox) => void;
 };
 
 const getBoundingBox = (
@@ -60,6 +69,8 @@ export default function PdfViewer({
   pageNumber: requestedPageNumberFromToolbar,
   zoom = 100,
   onNumPagesChange,
+  cropMode,
+  onCropComplete,
 }: PdfViewerProps) {
   const containerRef =
     useRef<HTMLDivElement | null>(null);
@@ -168,6 +179,118 @@ export default function PdfViewer({
     requestedPageNumber <= numPages
       ? requestedPageNumber
       : 1;
+
+  /*
+   * ------------------------------------------------------------
+   * Crop Compare drag state. cropRect is tracked in rendered-page
+   * pixels (relative to the page wrapper); on mouse-up it is
+   * converted into the DPI-150 pixel space the backend uses.
+   * Declared AFTER `pageNumber` (used in the mouse-up handler) and
+   * intentionally effect-free: the selection rectangle is only
+   * RENDERED while crop mode is active, so no cleanup effect is
+   * needed and no setState-in-effect cascades occur.
+   * ------------------------------------------------------------
+   */
+  const [cropRect, setCropRect] = useState<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null>(null);
+  const cropDragRef = useRef<{
+    startX: number;
+    startY: number;
+  } | null>(null);
+
+  const cropEnabled = Boolean(cropMode) && side === "master";
+
+  const handleCropMouseDown = (event: React.MouseEvent) => {
+    if (!cropEnabled || !pageWrapperRef.current) {
+      return;
+    }
+    event.preventDefault();
+    const bounds = pageWrapperRef.current.getBoundingClientRect();
+    cropDragRef.current = {
+      startX: event.clientX - bounds.left,
+      startY: event.clientY - bounds.top,
+    };
+    setCropRect({
+      x: event.clientX - bounds.left,
+      y: event.clientY - bounds.top,
+      width: 0,
+      height: 0,
+    });
+  };
+
+  useEffect(() => {
+    if (!cropEnabled) {
+      return;
+    }
+
+    const handleMove = (event: MouseEvent) => {
+      const drag = cropDragRef.current;
+      if (!drag || !pageWrapperRef.current) {
+        return;
+      }
+      const bounds = pageWrapperRef.current.getBoundingClientRect();
+      const currentX = event.clientX - bounds.left;
+      const currentY = event.clientY - bounds.top;
+      setCropRect({
+        x: Math.min(drag.startX, currentX),
+        y: Math.min(drag.startY, currentY),
+        width: Math.abs(currentX - drag.startX),
+        height: Math.abs(currentY - drag.startY),
+      });
+    };
+
+    const handleUp = () => {
+      const drag = cropDragRef.current;
+      cropDragRef.current = null;
+      if (!drag || !cropRect || !onCropComplete) {
+        return;
+      }
+      // Ignore accidental clicks / micro-drags.
+      if (cropRect.width < 4 || cropRect.height < 4) {
+        return;
+      }
+
+      /*
+       * Convert rendered-page pixels to the DPI-150 pixel space the
+       * backend finding boxes use. Preferred: the natural DPI-150
+       * width from the report; fallback: derive it from the zoom.
+       */
+      const renderedWidth = renderedPageWidth ?? pageWidth ?? 0;
+      if (renderedWidth <= 0) {
+        return;
+      }
+      const factor = naturalWidth
+        ? naturalWidth / renderedWidth
+        : 150 / 72 / (zoom / 100);
+
+      onCropComplete(pageNumber - 1, {
+        x: cropRect.x * factor,
+        y: cropRect.y * factor,
+        width: cropRect.width * factor,
+        height: cropRect.height * factor,
+      });
+    };
+
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+    };
+  }, [
+    cropEnabled,
+    cropRect,
+    pageNumber,
+    zoom,
+    naturalWidth,
+    pageWidth,
+    renderedPageWidth,
+    onCropComplete,
+  ]);
 
   useEffect(() => {
     onNumPagesChange?.(numPages || 1);
@@ -394,6 +517,7 @@ export default function PdfViewer({
         >
         <Box
           ref={pageWrapperRef}
+          onMouseDown={handleCropMouseDown}
           sx={{
             position: "relative",
             display: "inline-block",
@@ -401,6 +525,7 @@ export default function PdfViewer({
             bgcolor: "#FFFFFF",
             boxShadow:
               "0 2px 8px rgba(0,0,0,0.15)",
+            cursor: cropEnabled ? "crosshair" : "default",
           }}
         >
           <Page
@@ -423,6 +548,29 @@ export default function PdfViewer({
               );
             }}
           />
+
+          {/* =====================================================
+              CROP COMPARE SELECTION RECTANGLE
+              Dashed outline stays visible after mouse-up so the
+              user can see exactly which region was inspected.
+             ===================================================== */}
+
+          {cropEnabled && cropRect && (
+            <Box
+              sx={{
+                position: "absolute",
+                left: cropRect.x,
+                top: cropRect.y,
+                width: cropRect.width,
+                height: cropRect.height,
+                border: "2px dashed #6a1b9a",
+                backgroundColor: "rgba(106, 27, 154, 0.12)",
+                pointerEvents: "none",
+                zIndex: 25,
+                boxSizing: "border-box",
+              }}
+            />
+          )}
 
           {/* =====================================================
               SELECTED DIFFERENCE HIGHLIGHT
@@ -624,6 +772,33 @@ export default function PdfViewer({
             }}
           >
             Page {pageNumber} / {numPages}
+          </Typography>
+        </Box>
+      )}
+
+      {cropEnabled && (
+        <Box
+          sx={{
+            position: "absolute",
+            left: 20,
+            top: 20,
+            px: 1.5,
+            py: 0.75,
+            bgcolor: "rgba(255,255,255,0.95)",
+            border: "1px solid #6a1b9a",
+            borderRadius: 1,
+            boxShadow: 1,
+            zIndex: 30,
+          }}
+        >
+          <Typography
+            variant="caption"
+            sx={{
+              color: "#6a1b9a",
+              fontWeight: 600,
+            }}
+          >
+            Crop Compare: drag a rectangle on the page to inspect that region.
           </Typography>
         </Box>
       )}

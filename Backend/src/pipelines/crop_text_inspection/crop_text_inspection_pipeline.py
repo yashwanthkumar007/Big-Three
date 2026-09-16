@@ -22,10 +22,13 @@ matcher/checker work than needed for a small crop.
 """
  
 import sys
+import sys
+import os
+import time
 import os
 import fitz
 import pandas as pd
- 
+
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
 from src.components.extractors.pdf_extractor import extract_lines
 from src.components.matcher import match_blocks
@@ -35,6 +38,7 @@ from src.checkers.position import check_location
 from src.checkers.table_structure_v2 import extract_table_rows, check_table_rows_v2
 from src.review.grouping import group_location_findings
 from src.pipelines.report_builder import REPORT_DPI, _scale_bbox
+from src.components.cache import inspection_cache
 from src.exception import PipelineException
 from src.logger import logger
  
@@ -115,22 +119,29 @@ def run_crop_text_inspection(master_path: str, sample_path: str, page_number: in
         crop_rect = box_px_to_pdf_rect(box_px, dpi)
         expanded_rect = crop_rect + (-CROP_MARGIN_POINTS, -CROP_MARGIN_POINTS, CROP_MARGIN_POINTS, CROP_MARGIN_POINTS)
  
-        master_lines = extract_lines(master_path)
-        sample_lines = extract_lines(sample_path)
+        master_lines = inspection_cache.get_or_extract_lines(master_path, extract_lines)
+        sample_lines = inspection_cache.get_or_extract_lines(sample_path, extract_lines)
  
         master_lines = _filter_lines_to_region(master_lines, page_number, expanded_rect)
         sample_lines = _filter_lines_to_region(sample_lines, page_number, expanded_rect)
  
-        master_table_rows = _filter_table_rows_to_region(
-            extract_table_rows(master_path, page_number=page_number), expanded_rect
+        master_page_rows = inspection_cache.get_or_extract_table_rows(
+            master_path, page_number, lambda p, pg: extract_table_rows(p, page_number=pg)
         )
-        sample_table_rows = _filter_table_rows_to_region(
-            extract_table_rows(sample_path, page_number=page_number), expanded_rect
+        sample_page_rows = inspection_cache.get_or_extract_table_rows(
+            sample_path, page_number, lambda p, pg: extract_table_rows(p, page_number=pg)
         )
+        master_table_rows = _filter_table_rows_to_region(master_page_rows, expanded_rect)
+        sample_table_rows = _filter_table_rows_to_region(sample_page_rows, expanded_rect)
  
         table_findings = []
         if master_table_rows or sample_table_rows:
-            all_table_findings = check_table_rows_v2(master_path, sample_path, page_number=page_number)
+            all_table_findings = check_table_rows_v2(
+                master_path, sample_path,
+                page_number=page_number,
+                master_rows=master_page_rows,
+                sample_rows=sample_page_rows,
+            )
             table_findings = [
                 f for f in all_table_findings
                 if (f.get("master_bbox") and _boxes_overlap(f["master_bbox"], tuple(expanded_rect)))

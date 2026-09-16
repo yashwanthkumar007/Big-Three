@@ -51,6 +51,29 @@ from src.utils import (
 GENERIC_TEXT_WEIGHT = 0.0
 GENERIC_POSITION_WEIGHT = 1.0
 
+# ---------------------------------------------------------------------------
+# FALSE-MATCH PROTECTION
+# ---------------------------------------------------------------------------
+
+# If two normal text lines have extremely low text similarity, don't allow
+# position alone to make them a match.
+#
+# Example:
+#
+# Master:
+#     Uputa o lijeku: Informacije o korisniku
+#
+# Sample:
+#     Variable Data Information box for online
+#
+# These should never become a pair simply because their positions happen to
+# be close.
+MIN_TEXT_SIMILARITY_FOR_NORMAL_MATCH = 0.15
+
+# When text similarity is reasonably strong, position can tolerate a larger
+# layout difference.
+STRONG_TEXT_SIMILARITY = 0.65
+
 
 import re
 from rapidfuzz import fuzz
@@ -78,7 +101,135 @@ def _is_generic_text(text: str) -> bool:
     return digit_ratio >= 0.6
 
 
-def combined_score(m_row, s_row) -> float:
+def _get_page_sizes(df: pd.DataFrame) -> dict:
+    """
+    Calculate approximate page width/height from extracted row bboxes.
+
+    Returns:
+
+        {
+            page_number: (width, height)
+        }
+    """
+
+    page_sizes = {}
+
+    if df.empty:
+        return page_sizes
+
+    for page in df["page"].unique():
+
+        page_rows = df[
+            df["page"] == page
+        ]
+
+        if page_rows.empty:
+            continue
+
+        max_x = max(
+            bbox[2]
+            for bbox in page_rows["bbox"]
+        )
+
+        max_y = max(
+            bbox[3]
+            for bbox in page_rows["bbox"]
+        )
+
+        page_sizes[page] = (
+            max(max_x, 1.0),
+            max(max_y, 1.0),
+        )
+
+    return page_sizes
+
+
+def _normalized_position(
+    row,
+    page_sizes: dict,
+) -> tuple:
+    """
+    Convert the row's x/y position into normalized coordinates.
+
+    This allows PDFs with different page sizes to be compared.
+    """
+
+    page = row["page"]
+    bbox = row["bbox"]
+
+    page_w, page_h = page_sizes.get(
+        page,
+        (1.0, 1.0),
+    )
+
+    if page_w <= 0:
+        page_w = 1.0
+
+    if page_h <= 0:
+        page_h = 1.0
+
+    return (
+        bbox[0] / page_w,
+        bbox[1] / page_h,
+    )
+
+
+def _position_distance(
+    master_row,
+    sample_row,
+    master_page_sizes,
+    sample_page_sizes,
+) -> float:
+    """
+    Calculate normalized Euclidean distance between Master and Sample
+    positions.
+    """
+
+    mx, my = _normalized_position(
+        master_row,
+        master_page_sizes,
+    )
+
+    sx, sy = _normalized_position(
+        sample_row,
+        sample_page_sizes,
+    )
+
+    return (
+        (mx - sx) ** 2
+        + (my - sy) ** 2
+    ) ** 0.5
+
+
+def _text_similarity(
+    master_row,
+    sample_row,
+) -> float:
+    """
+    Calculate normalized text similarity from 0.0 to 1.0.
+    """
+
+    master_text = normalize_whitespace(
+        master_row["text"]
+    )
+
+    sample_text = normalize_whitespace(
+        sample_row["text"]
+    )
+
+    return (
+        fuzz.ratio(
+            master_text,
+            sample_text,
+        )
+        / 100.0
+    )
+def combined_score(
+    m_row,
+    s_row,
+    master_page_sizes=None,
+    sample_page_sizes=None,
+) -> float:
     m_text = normalize_whitespace(m_row["text"])
     s_text = normalize_whitespace(s_row["text"])
     # rapidfuzz.fuzz.ratio ~100x faster than difflib.SequenceMatcher at
@@ -95,10 +246,25 @@ def combined_score(m_row, s_row) -> float:
         # fall back to text similarity only.
         return text_sim
 
-    mx0, my0 = m_row["bbox"][0], m_row["bbox"][1]
-    sx0, sy0 = s_row["bbox"][0], s_row["bbox"][1]
-    dist = ((mx0 - sx0) ** 2 + (my0 - sy0) ** 2) ** 0.5
-    pos_sim = max(0, 1 - (dist / POSITION_MAX_DISTANCE))
+    # Position, normalized when both page-size maps are supplied (so rows
+    # from differently-sized pages can be compared). Falls back to the
+    # original raw-pixel distance otherwise.
+    if (
+        master_page_sizes is not None
+        and sample_page_sizes is not None
+    ):
+        distance = _position_distance(
+            m_row,
+            s_row,
+            master_page_sizes,
+            sample_page_sizes,
+        )
+        pos_sim = max(0.0, 1.0 - distance)
+    else:
+        mx0, my0 = m_row["bbox"][0], m_row["bbox"][1]
+        sx0, sy0 = s_row["bbox"][0], s_row["bbox"][1]
+        dist = ((mx0 - sx0) ** 2 + (my0 - sy0) ** 2) ** 0.5
+        pos_sim = max(0, 1 - (dist / POSITION_MAX_DISTANCE))
 
     # Generic short digit-heavy text needs position to dominate — see
     # _is_generic_text docstring and module docstring above for the
@@ -107,6 +273,68 @@ def combined_score(m_row, s_row) -> float:
         return (GENERIC_TEXT_WEIGHT * text_sim) + (GENERIC_POSITION_WEIGHT * pos_sim)
 
     return (TEXT_WEIGHT * text_sim) + (POSITION_WEIGHT * pos_sim)
+
+
+def _candidate_is_allowed(
+    m_row,
+    s_row,
+    score,
+    position_distance,
+) -> bool:
+    """
+    Decide whether a calculated match is acceptable.
+
+    This is intentionally less strict than a hard text-exactness gate.
+
+    We only reject extremely unrelated normal text.
+
+    This allows legitimate artwork reflow / translation differences
+    to continue matching.
+    """
+
+    master_text = normalize_whitespace(
+        m_row["text"]
+    )
+
+    sample_text = normalize_whitespace(
+        s_row["text"]
+    )
+
+    # Exact text is always acceptable.
+    if master_text == sample_text:
+        return True
+
+    generic_pair = (
+        _is_generic_text(master_text)
+        and _is_generic_text(sample_text)
+    )
+
+    # ---------------------------------------------------------------
+    # Generic numbers/codes
+    # ---------------------------------------------------------------
+
+    if generic_pair:
+        return score >= MATCH_SCORE_THRESHOLD
+
+    # ---------------------------------------------------------------
+    # Normal text
+    # ---------------------------------------------------------------
+
+    text_score = _text_similarity(
+        m_row,
+        s_row,
+    )
+
+    # Extremely unrelated text should not be paired.
+    if text_score < MIN_TEXT_SIMILARITY_FOR_NORMAL_MATCH:
+        # Only allow an exception for an extremely strong positional match.
+        # This handles artwork where the text itself has changed
+        # significantly but remains in exactly the same location.
+        if position_distance > 0.05:
+            return False
+
+    # Otherwise preserve the normal score threshold.
+    return score >= MATCH_SCORE_THRESHOLD
 
 
 def match_blocks(master_df: pd.DataFrame, sample_df: pd.DataFrame) -> dict:
@@ -123,6 +351,11 @@ def match_blocks(master_df: pd.DataFrame, sample_df: pd.DataFrame) -> dict:
     """
     try:
         matched_pairs, unmatched_master, unmatched_sample = [], [], []
+
+        # Page-size normalization — lets rows from differently-sized pages
+        # (different PDF layouts) still be compared on a normalized scale.
+        master_page_sizes = _get_page_sizes(master_df)
+        sample_page_sizes = _get_page_sizes(sample_df)
 
         pages = set(master_df["page"].unique()) | set(sample_df["page"].unique())
 
@@ -143,14 +376,41 @@ def match_blocks(master_df: pd.DataFrame, sample_df: pd.DataFrame) -> dict:
             s_page = s_page_df.to_dict("records")
 
             cost_matrix = np.ones((n, m))
+            candidate_allowed = {}
             for i in range(n):
                 for j in range(m):
-                    cost_matrix[i, j] = 1 - combined_score(m_page[i], s_page[j])
+                    position_distance = _position_distance(
+                        m_page[i],
+                        s_page[j],
+                        master_page_sizes,
+                        sample_page_sizes,
+                    )
+                    score = combined_score(
+                        m_page[i],
+                        s_page[j],
+                        master_page_sizes,
+                        sample_page_sizes,
+                    )
+                    allowed = _candidate_is_allowed(
+                        m_page[i],
+                        s_page[j],
+                        score,
+                        position_distance,
+                    )
+                    candidate_allowed[(i, j)] = allowed
+                    if allowed:
+                        cost_matrix[i, j] = 1.0 - score
+                    else:
+                        # Large cost keeps the candidate out, but still
+                        # leaves the matrix valid for Hungarian.
+                        cost_matrix[i, j] = 1.0
 
             row_ind, col_ind = linear_sum_assignment(cost_matrix)
             matched_m, matched_s = set(), set()
 
             for i, j in zip(row_ind, col_ind):
+                if not candidate_allowed.get((i, j), False):
+                    continue
                 score = 1 - cost_matrix[i, j]
                 if score < MATCH_SCORE_THRESHOLD:
                     continue

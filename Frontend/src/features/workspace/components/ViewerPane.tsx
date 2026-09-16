@@ -16,6 +16,9 @@ type ViewerPaneProps = {
   naturalWidth?: number;
   naturalHeight?: number;
   zeroBasedPageIndex?: boolean;
+  /** Crop Compare props - forwarded to PdfViewer (master side only). */
+  cropMode?: boolean;
+  onCropComplete?: (page0Based: number, box: { x: number; y: number; width: number; height: number }) => void;
 };
  
 export default function ViewerPane({
@@ -27,6 +30,8 @@ export default function ViewerPane({
   naturalWidth,
   naturalHeight,
   zeroBasedPageIndex,
+  cropMode,
+  onCropComplete,
 }: ViewerPaneProps) {
   const [manualPageNumber, setManualPageNumber] =
     useState(1);
@@ -207,6 +212,8 @@ export default function ViewerPane({
           pageNumber={effectivePageNumber}
           zoom={zoom}
           onNumPagesChange={setNumPages}
+          cropMode={cropMode}
+          onCropComplete={onCropComplete}
         />
       </Box>
     </Paper>

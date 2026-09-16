@@ -211,6 +211,16 @@ export default function InspectionSidebar({
             <FormControlLabel
               control={
                 <Checkbox
+                  checked={differenceFilters.italic}
+                  onChange={handleCheckbox("italic")}
+                />
+              }
+              label="Italic"
+            />
+
+            <FormControlLabel
+              control={
+                <Checkbox
                   checked={differenceFilters.color}
                   onChange={handleCheckbox("color")}
                 />
@@ -226,6 +236,16 @@ export default function InspectionSidebar({
                 />
               }
               label="Font Type"
+            />
+
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={differenceFilters.mixedFont}
+                  onChange={handleCheckbox("mixedFont")}
+                />
+              }
+              label="Mixed Font"
             />
 
             <FormControlLabel

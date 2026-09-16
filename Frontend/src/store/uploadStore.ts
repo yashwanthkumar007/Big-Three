@@ -23,8 +23,10 @@ export type DifferenceFilters = {
   insertion: boolean;
   location: boolean;
   bold: boolean;
+  italic: boolean;
   color: boolean;
   fontType: boolean;
+  mixedFont: boolean;
   space: boolean;
   size: boolean;
   underline: boolean;
@@ -38,8 +40,10 @@ export const DEFAULT_DIFFERENCE_FILTERS: DifferenceFilters = {
   insertion: true,
   location: true,
   bold: false,
+  italic: false,
   color: false,
   fontType: false,
+  mixedFont: false,
   space: true,
   size: true,
   underline: false,
