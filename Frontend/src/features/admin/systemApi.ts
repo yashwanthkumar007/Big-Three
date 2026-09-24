@@ -99,6 +99,9 @@ export type User = {
   passwordExpiry?: string | null;
   createdAt: string;
   emailNotificationEnabled: boolean;
+  /** Email verification status — single source of truth is the backend
+   *  `email_verified` field. Missing field (legacy users) = Unverified. */
+  emailVerified?: boolean;
 };
 
 export type CreateUserData = {
@@ -284,11 +287,11 @@ const MOCK_INFO: SystemInformation = {
 };
 
 const MOCK_USERS: User[] = [
-  { id: "u1", username: "tejaswini.vangimalla", email: "tejaswini.vangimalla@viatris.com", firstName: "Tejaswini", lastName: "Vangimalla", accountType: "Administrator", accountStatus: "Active", company: "Viatris", lastLogin: "2026-08-30T09:12:00Z", passwordExpiry: "2026-10-19T06:20:52Z", createdAt: "2026-07-17T09:22:29Z", emailNotificationEnabled: true },
-  { id: "u2", username: "admin", email: "admin@viatris.com", firstName: "Admin", lastName: "User", accountType: "Administrator", accountStatus: "Active", company: "Viatris", lastLogin: "2026-08-31T14:05:00Z", passwordExpiry: "2026-11-01T00:00:00Z", createdAt: "2026-06-01T08:00:00Z", emailNotificationEnabled: false },
-  { id: "u3", username: "ravi.kumar", email: "ravi.kumar@viatris.com", firstName: "Ravi", lastName: "Kumar", accountType: "user", accountStatus: "Active", company: "Viatris", lastLogin: "2026-08-29T11:40:00Z", passwordExpiry: "2026-09-30T00:00:00Z", createdAt: "2026-07-02T10:15:00Z", emailNotificationEnabled: true },
-  { id: "u4", username: "priya.sharma", email: "priya.sharma@viatris.com", firstName: "Priya", lastName: "Sharma", accountType: "user", accountStatus: "Inactive", company: "Viatris", lastLogin: "2026-08-10T16:22:00Z", passwordExpiry: "2026-10-05T00:00:00Z", createdAt: "2026-07-20T12:00:00Z", emailNotificationEnabled: false },
-  { id: "u5", username: "yashwanth.kumar", email: "YashwanthKumar.k@viatris.com", firstName: "Yashwanth Kumar", lastName: "K", accountType: "user", accountStatus: "Active", company: "Viatris", lastLogin: null, passwordExpiry: "2026-12-02T00:00:00Z", createdAt: "2026-09-08T12:51:31Z", emailNotificationEnabled: true },
+  { id: "u1", username: "tejaswini.vangimalla", email: "tejaswini.vangimalla@viatris.com", firstName: "Tejaswini", lastName: "Vangimalla", accountType: "Administrator", accountStatus: "Active", company: "Viatris", lastLogin: "2026-08-30T09:12:00Z", passwordExpiry: "2026-10-19T06:20:52Z", createdAt: "2026-07-17T09:22:29Z", emailNotificationEnabled: true, emailVerified: true },
+  { id: "u2", username: "admin", email: "admin@viatris.com", firstName: "Admin", lastName: "User", accountType: "Administrator", accountStatus: "Active", company: "Viatris", lastLogin: "2026-08-31T14:05:00Z", passwordExpiry: "2026-11-01T00:00:00Z", createdAt: "2026-06-01T08:00:00Z", emailNotificationEnabled: false, emailVerified: true },
+  { id: "u3", username: "ravi.kumar", email: "ravi.kumar@viatris.com", firstName: "Ravi", lastName: "Kumar", accountType: "user", accountStatus: "Active", company: "Viatris", lastLogin: "2026-08-29T11:40:00Z", passwordExpiry: "2026-09-30T00:00:00Z", createdAt: "2026-07-02T10:15:00Z", emailNotificationEnabled: true, emailVerified: false },
+  { id: "u4", username: "priya.sharma", email: "priya.sharma@viatris.com", firstName: "Priya", lastName: "Sharma", accountType: "user", accountStatus: "Inactive", company: "Viatris", lastLogin: "2026-08-10T16:22:00Z", passwordExpiry: "2026-10-05T00:00:00Z", createdAt: "2026-07-20T12:00:00Z", emailNotificationEnabled: false, emailVerified: false },
+  { id: "u5", username: "yashwanth.kumar", email: "YashwanthKumar.k@viatris.com", firstName: "Yashwanth Kumar", lastName: "K", accountType: "user", accountStatus: "Active", company: "Viatris", lastLogin: null, passwordExpiry: "2026-12-02T00:00:00Z", createdAt: "2026-09-08T12:51:31Z", emailNotificationEnabled: true, emailVerified: false },
 ];
 
 const MOCK_LOGS: AuditLog[] = [
@@ -484,7 +487,11 @@ export async function getUsers(): Promise<User[]> {
   try {
     // Fetch users from Cosmos DB via the backend API
     const backendUsers = await listResources<User>("users");
-    return backendUsers;
+    if (backendUsers.length > 0) {
+      return backendUsers;
+    }
+    // Backend returned empty list — fall back to mock users
+    return [...mockUsers];
   } catch (error) {
     if (isBackendUnavailable(error)) {
       await delay(200);
@@ -548,6 +555,55 @@ function addMockAuditLog(entry: Partial<AuditLog>): void {
     ...entry,
   };
   mockAuditLogs = [logEntry, ...mockAuditLogs];
+}
+
+/**
+ * Sends a verification email to the given user. Works for BOTH the admin
+ * (User Management page, any user) and the logged-in user (Profile page,
+ * own account) — the backend enforces admin-or-self authorization. This
+ * NEVER marks the user verified; only clicking the emailed link does.
+ */
+export type SendVerificationResponse =
+  | {
+      status: "sent";
+      message: string;
+      email_verified: false;
+      expiresAt: string;
+    }
+  | {
+      status: "already_verified";
+      message: string;
+      email_verified: true;
+    }
+  | { error: string };
+
+export async function sendVerificationEmail(
+  userId: string
+): Promise<SendVerificationResponse> {
+  try {
+    const { data } = await api.post<SendVerificationResponse>(
+      `/api/users/${encodeURIComponent(userId)}/send-verification`
+    );
+    return data;
+  } catch (error) {
+    if (isBackendUnavailable(error)) {
+      // Backend unavailable: update mock users in place
+      const userIndex = mockUsers.findIndex((u) => u.id === userId);
+      if (userIndex !== -1) {
+        mockUsers[userIndex] = {
+          ...mockUsers[userIndex],
+          emailVerified: false,
+        };
+      }
+      return {
+        status: "sent",
+        message: "Verification email sent (offline mode).",
+        email_verified: false,
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      };
+    }
+    throw new Error(getErrorMessage(error));
+  }
 }
 
 export async function createUser(data: CreateUserData): Promise<User> {

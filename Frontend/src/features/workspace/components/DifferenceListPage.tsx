@@ -54,6 +54,11 @@ export default function DifferenceListPage() {
 
   const [selectedId, setSelectedId] = useState<number | null>(null);
 
+  // Toggle: clicking the already-selected difference deselects it.
+  const toggleSelect = (differenceId: number) => {
+    setSelectedId((prev) => (prev === differenceId ? null : differenceId));
+  };
+
   /* ------------------------------------------------------------------ */
   /* Admin-configured levels and comments (Setup Levels & Comments)      */
   /* ------------------------------------------------------------------ */
@@ -434,13 +439,11 @@ export default function DifferenceListPage() {
                     key={difference.id}
                     hover
                     selected={isSelected}
-                    onClick={() => {
-                      setSelectedId(difference.id);
-                      console.log(
-                        "[DIFFERENCE LIST] Selected difference:",
-                        difference.id
-                      );
-                    }}
+                    // NOTE: navigation is intentionally NOT on the row. Only
+                    // the ID / Master / Sample cells jump to the difference in
+                    // the PDF viewers — clicking inside the Level or Comment
+                    // cells (to pick a level/comment) must never redirect the
+                    // viewers (user-experience bug fix).
                     sx={{
                       cursor: "pointer",
                       bgcolor: isSelected
@@ -458,24 +461,29 @@ export default function DifferenceListPage() {
                     </TableCell>
 
                     <TableCell
+                      onClick={() => toggleSelect(difference.id)}
                       sx={{
                         fontSize: 14,
                         color: "#535a62",
+                        cursor: "pointer",
                       }}
                     >
                       {difference.id}
                     </TableCell>
 
                     <TableCell
+                      onClick={() => toggleSelect(difference.id)}
                       sx={{
                         fontSize: 14,
                         color: "#535a62",
+                        cursor: "pointer",
                       }}
                     >
                       {difference.type}
                     </TableCell>
 
                     <TableCell
+                      onClick={() => toggleSelect(difference.id)}
                       sx={{
                         fontSize: 14,
                         color: "#535a62",
@@ -483,6 +491,7 @@ export default function DifferenceListPage() {
                         overflow: "hidden",
                         textOverflow: "ellipsis",
                         whiteSpace: "nowrap",
+                        cursor: "pointer",
                       }}
                       title={difference.master}
                     >
@@ -490,6 +499,7 @@ export default function DifferenceListPage() {
                     </TableCell>
 
                     <TableCell
+                      onClick={() => toggleSelect(difference.id)}
                       sx={{
                         fontSize: 14,
                         color: "#535a62",
@@ -497,6 +507,7 @@ export default function DifferenceListPage() {
                         overflow: "hidden",
                         textOverflow: "ellipsis",
                         whiteSpace: "nowrap",
+                        cursor: "pointer",
                       }}
                       title={difference.sample}
                     >

@@ -33,7 +33,9 @@ import HourglassEmptyOutlinedIcon from "@mui/icons-material/HourglassEmptyOutlin
 import KeyOutlinedIcon from "@mui/icons-material/KeyOutlined";
 import LockOutlinedIcon from "@mui/icons-material/LockOutlined";
 import NotificationsOutlinedIcon from "@mui/icons-material/NotificationsOutlined";
+import EmailOutlinedIcon from "@mui/icons-material/EmailOutlined";
 import PersonOutlineOutlinedIcon from "@mui/icons-material/PersonOutlineOutlined";
+import SendOutlinedIcon from "@mui/icons-material/SendOutlined";
 import SettingsOutlinedIcon from "@mui/icons-material/SettingsOutlined";
 
 import {
@@ -47,6 +49,7 @@ import {
   fetchRunningInspections,
   getApiErrorMessage,
   revokeApiToken,
+  sendVerificationEmail,
   updatePreferences,
 } from "../profileApi";
 
@@ -415,6 +418,28 @@ export default function ProfilePage() {
   /* Email notification toggle */
   const [prefBusy, setPrefBusy] = useState(false);
 
+  /* Email verification */
+  const [sendingVerification, setSendingVerification] = useState(false);
+
+  const handleSendVerification = async () => {
+    if (!profile || sendingVerification) return;
+    setSendingVerification(true);
+    try {
+      const result = await sendVerificationEmail(profile.id);
+      showNotif(result.message, "success");
+      // Refresh profile to pick up updated emailVerified status
+      const updated = await fetchMyProfile();
+      setProfile(updated);
+    } catch (err) {
+      showNotif(
+        err instanceof Error ? err.message : "Failed to send verification email",
+        "error"
+      );
+    } finally {
+      setSendingVerification(false);
+    }
+  };
+
   /* REST API token dialog */
   const [tokenDialogOpen, setTokenDialogOpen] = useState(false);
   const [tokens, setTokens] = useState<ApiToken[]>([]);
@@ -622,7 +647,54 @@ export default function ProfilePage() {
               <InfoRow label="Company" value={profile.company} />
             </SectionCard>
 
-            {/* 2. Change Password */}
+            {/* 2. Email Verification */}
+            <SectionCard title="Email Verification" icon={<EmailOutlinedIcon />}>
+              <Box
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  flexWrap: "wrap",
+                  gap: 2,
+                }}
+              >
+                <Box>
+                  <Typography sx={{ fontWeight: 600 }}>
+                    {profile.emailVerified ? "Verified" : "Not Verified"}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    {profile.emailVerified
+                      ? "Your email address has been verified."
+                      : "Verify your email to confirm your identity."}
+                  </Typography>
+                </Box>
+                {!profile.emailVerified && (
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    startIcon={
+                      sendingVerification ? (
+                        <CircularProgress size={16} />
+                      ) : (
+                        <SendOutlinedIcon fontSize="small" />
+                      )
+                    }
+                    onClick={handleSendVerification}
+                    disabled={sendingVerification}
+                    sx={{
+                      textTransform: "none",
+                      borderColor: PRIMARY,
+                      color: PRIMARY,
+                      "&:hover": { borderColor: ACCENT, bgcolor: "rgba(112,62,151,.06)" },
+                    }}
+                  >
+                    {sendingVerification ? "Sending..." : "Send Verification Email"}
+                  </Button>
+                )}
+              </Box>
+            </SectionCard>
+
+            {/* 3. Change Password */}
             <SectionCard title="Change Password" icon={<LockOutlinedIcon />}>
               <form onSubmit={handleSubmit(onPasswordSubmit)}>
                 <Stack spacing={2}>

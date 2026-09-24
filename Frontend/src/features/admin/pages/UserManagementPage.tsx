@@ -28,6 +28,8 @@ import BlockOutlinedIcon from "@mui/icons-material/BlockOutlined";
 import CheckCircleOutlineOutlinedIcon from "@mui/icons-material/CheckCircleOutlineOutlined";
 import LockResetOutlinedIcon from "@mui/icons-material/LockResetOutlined";
 import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined";
+import SendOutlinedIcon from "@mui/icons-material/SendOutlined";
+import DoneOutlinedIcon from "@mui/icons-material/DoneOutlined";
 import { Controller, useForm } from "react-hook-form";
 
 import {
@@ -37,6 +39,7 @@ import {
   enableUser,
   getUsers,
   resetUserPassword,
+  sendVerificationEmail,
   updateUser,
   type AccountTypeOption,
   type User,
@@ -62,6 +65,7 @@ const COLUMNS = [
   "Company",
   "Last Login",
   "Created Date",
+  "Email Verification",
   "Actions",
 ];
 
@@ -73,6 +77,44 @@ const statusChip = (status: UserStatus) => (
     sx={{ fontWeight: 600 }}
   />
 );
+
+const verificationChip = (
+  verified: boolean | undefined,
+  sendingUserId: string | null,
+  userId: string
+) => {
+  if (sendingUserId === userId) {
+    return (
+      <Chip
+        size="small"
+        label="Sending..."
+        color="warning"
+        variant="outlined"
+        sx={{ fontWeight: 600, cursor: "default" }}
+      />
+    );
+  }
+  if (verified) {
+    return (
+      <Chip
+        size="small"
+        label="✓ Verified"
+        color="success"
+        variant="outlined"
+        sx={{ fontWeight: 600 }}
+      />
+    );
+  }
+  return (
+    <Chip
+      size="small"
+      label="Unverified"
+      color="error"
+      variant="outlined"
+      sx={{ fontWeight: 600 }}
+    />
+  );
+};
 
 type FormValues = {
   username: string;
@@ -388,6 +430,7 @@ export default function UserManagementPage() {
   const [confirmTarget, setConfirmTarget] = useState<User | null>(null);
   const [busy, setBusy] = useState(false);
   const [snack, setSnack] = useState<Snack>(null);
+  const [sending, setSending] = useState<string | null>(null);
 
   const load = () => {
     getUsers()
@@ -418,6 +461,33 @@ export default function UserManagementPage() {
     () => (users ?? []).slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage),
     [users, page, rowsPerPage]
   );
+
+  const handleSendVerification = async (user: User) => {
+    if (sending === user.id) return;
+    setSending(user.id);
+    try {
+      const result = await sendVerificationEmail(user.id);
+      if ("error" in result) {
+        setSnack({ message: result.error, severity: "error" });
+      } else {
+        setSnack({
+          message:
+            result.status === "already_verified"
+              ? `Email already verified for "${user.username}".`
+              : `Verification email sent to "${user.email}".`,
+          severity: "success",
+        });
+        load();
+      }
+    } catch (err) {
+      setSnack({
+        message: err instanceof Error ? err.message : "Failed to send verification email",
+        severity: "error",
+      });
+    } finally {
+      setSending(null);
+    }
+  };
 
   const runAction = async () => {
     if (!confirmAction || !confirmTarget) return;
@@ -527,6 +597,9 @@ export default function UserManagementPage() {
                   <TableCell sx={{ whiteSpace: "nowrap" }}>{fmtDateTime(user.lastLogin)}</TableCell>
                   <TableCell sx={{ whiteSpace: "nowrap" }}>{fmtDate(user.createdAt)}</TableCell>
                   <TableCell sx={{ whiteSpace: "nowrap" }}>
+                    {verificationChip(user.emailVerified, sending, user.id)}
+                  </TableCell>
+                  <TableCell sx={{ whiteSpace: "nowrap" }}>
                     <Tooltip title="View">
                       <IconButton size="small" onClick={() => setViewUser(user)}>
                         <VisibilityOutlinedIcon fontSize="small" />
@@ -541,6 +614,26 @@ export default function UserManagementPage() {
                         }}
                       >
                         <EditOutlinedIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                    <Tooltip title="Send Verification Email">
+                      <IconButton
+                        size="small"
+                        onClick={() => handleSendVerification(user)}
+                        disabled={sending !== null || user.emailVerified}
+                        sx={{
+                          color: user.emailVerified ? "success.main" : "primary.main",
+                          "&:hover": { bgcolor: user.emailVerified ? "transparent" : "rgba(42,39,110,.06)" },
+                          "&.Mui-disabled": { color: "success.main", bgcolor: "transparent" },
+                        }}
+                      >
+                        {sending === user.id ? (
+                          <CircularProgress size={16} sx={{ color: "primary.main" }} />
+                        ) : user.emailVerified ? (
+                          <DoneOutlinedIcon fontSize="small" />
+                        ) : (
+                          <SendOutlinedIcon fontSize="small" />
+                        )}
                       </IconButton>
                     </Tooltip>
                     <Tooltip title={user.accountStatus === "Active" ? "Disable" : "Enable"}>

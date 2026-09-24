@@ -69,32 +69,40 @@ export default function Header() {
     {
       name: "Text Inspection",
       icon: <DescriptionOutlinedIcon />,
-      route: "/workspace/text/upload"
+      route: "/workspace/text/upload",
+      // Only Text Inspection is implemented; every other module is a
+      // "Coming Soon" placeholder — visible, clickable, but never navigates.
+      available: true
     },
     {
       name: "Graphics Inspection",
       icon: <ExtensionOutlinedIcon />,
-      route: "/workspace/graphics"
+      route: "/workspace/graphics",
+      available: false
     },
     {
       name: "Spelling Inspection",
       icon: <SpellcheckOutlinedIcon />,
-      route: "/workspace/spelling"
+      route: "/workspace/spelling",
+      available: false
     },
     {
       name: "Braille Inspection",
       icon: <BrailleDotsIcon />,
-      route: "/workspace/braille"
+      route: "/workspace/braille",
+      available: false
     },
     {
       name: "Barcode Inspection",
       icon: <BarcodeIcon size={22} />,
-      route: "/workspace/barcode"
+      route: "/workspace/barcode",
+      available: false
     },
     {
       name: "Notes Inspection",
       icon: <StickyNote2OutlinedIcon />,
-      route: "/workspace/notes"
+      route: "/workspace/notes",
+      available: false
     }
   ];
 
@@ -162,23 +170,73 @@ export default function Header() {
               return (
                 <Tooltip
                   key={module.name}
-                  title={module.name}
+                  // Unavailable modules show the inspection name with a
+                  // "Coming Soon" note underneath on hover.
+                  title={
+                    module.available ? (
+                      module.name
+                    ) : (
+                      <Box>
+                        <Typography
+                          sx={{ color: "inherit", fontSize: "0.875rem", fontWeight: 600 }}
+                        >
+                          {module.name}
+                        </Typography>
+                        <Typography
+                          sx={{ color: "rgba(255,255,255,0.75)", fontSize: "0.75rem" }}
+                        >
+                          Coming Soon
+                        </Typography>
+                      </Box>
+                    )
+                  }
                   arrow
+                  slotProps={{
+                    tooltip: {
+                      // Brand navy tooltip background (default MUI grey replaced).
+                      sx: {
+                        bgcolor: "#2A276E",
+                        color: "#ffffff",
+                        maxWidth: 240,
+                        border: "1px solid rgba(255,255,255,0.25)",
+                        "& .MuiTooltip-arrow": {
+                          color: "#2A276E"
+                        }
+                      }
+                    }
+                  }}
                 >
                   <IconButton
-                    onClick={() => navigate(module.route)}
+                    // Coming Soon modules stay clickable (so the hover tooltip
+                    // fires) but NEVER navigate anywhere.
+                    onClick={() => {
+                      if (module.available) {
+                        navigate(module.route);
+                      }
+                    }}
                     sx={{
-                      color: "white",
                       borderRadius: 2,
                       transition: "all .25s ease",
+                      cursor: module.available ? "pointer" : "default",
+
+                      color: module.available
+                        ? "white"
+                        : "rgba(255,255,255,0.4)",
+
                       bgcolor: isActive
                         ? "#703E97"
                         : "transparent",
 
-                      "&:hover": {
-                        bgcolor: "#703E97",
-                        transform: "translateY(-2px)"
-                      }
+                      "&:hover": module.available
+                        ? {
+                            bgcolor: "#703E97",
+                            transform: "translateY(-2px)"
+                          }
+                        : {
+                            // Brand purple hover — same accent as the active
+                            // module, just without the lift effect.
+                            bgcolor: "#703E97"
+                          }
                     }}
                   >
                     {module.icon}

@@ -31,7 +31,14 @@ from src.inspection_registry import get_inspection_config
 from src.pipelines.report_builder import build_report, render_page
 from src.pipelines.comparison_pipeline import run_crop_text_inspection
 import pandas as pd
-from src.email_service import send_inspection_report_email
+from src.email_service import send_inspection_report_email, send_email_verification_email
+from src.email_verification_service import (
+    TOKEN_TTL_HOURS,
+    consume_verification,
+    create_verification,
+    is_email_verified,
+    resend_cooldown_active,
+)
 from src.azure_service import (
     cosmos_delete_document,
     cosmos_get_document,
@@ -186,6 +193,13 @@ def api_resource_collection(resource):
     # left untouched.
     if resource == "users" and isinstance(validated.get("password"), str) and not is_password_hashed(validated["password"]):
         validated["password"] = hash_password(validated["password"])
+
+    # New users always start with an UNVERIFIED email — verification happens
+    # only through the emailed verification link. Never trust a client value.
+    # NOTE: email verification NEVER blocks login (see api_auth_login —
+    # there is intentionally no email_verified check there).
+    if resource == "users":
+        validated["email_verified"] = False
 
     try:
         result = cosmos_upsert_document(resource, validated)
@@ -594,6 +608,11 @@ def api_auth_login():
         # Validate password against the stored password field.
         # Stored values are werkzeug hashes; legacy plaintext values are still
         # accepted and transparently upgraded to a hash on successful login.
+        # NOTE: email verification NEVER blocks login — there is intentionally
+        # no email_verified check here. Unverified users can still sign in;
+        # verification only gates features that explicitly require it.
+        # if not user.email_verified:
+        #     return jsonify({"error": "Email not verified"}), 401  # DISABLED: verification does not block login
         password_ok, needs_rehash = verify_password(user.get("password"), password)
         if not password_ok:
             # LOGIN_FAILED: wrong password
@@ -1064,6 +1083,212 @@ def api_update_preferences():
         return jsonify({"error": str(exc)}), 500
 
 
+# ---------------------------------------------------------------------------
+# EMAIL VERIFICATION
+# One mechanism serves both admin-triggered and user-triggered verification.
+# Sending an email NEVER marks the user verified — the emailed link does.
+# ---------------------------------------------------------------------------
+
+def _app_base_url() -> str:
+    """Base URL used to build verification links. Configurable via
+    APP_BASE_URL; falls back to the running local server."""
+    configured = os.getenv("APP_BASE_URL", "").strip().rstrip("/")
+    if configured:
+        return configured
+    return request.host_url.rstrip("/")
+
+
+def _get_user_by_id(user_id: str):
+    try:
+        docs = cosmos_query_documents(
+            "users",
+            {
+                "query": "SELECT * FROM c WHERE c.id = @uid",
+                "parameters": [{"name": "@uid", "value": user_id}],
+            },
+        ) or []
+    except Exception as exc:
+        logger.error("[EMAIL-VERIFY] user lookup failed for %s: %s", user_id, exc)
+        return None
+    return docs[0] if docs else None
+
+
+def _send_verification_email_or_error(user: dict):
+    """Creates the token and sends the email. Returns (response, status_code, None)
+    on failure or (None, None, expires_at_iso) on success."""
+    cooldown = resend_cooldown_active(user.get("id", ""))
+    if cooldown > 0:
+        return (
+            jsonify({
+                "error": (
+                    f"A verification email was sent recently. "
+                    f"Please wait {cooldown} second(s) before requesting again."
+                ),
+                "cooldownSeconds": cooldown,
+            }),
+            429,
+            None,
+        )
+
+    raw_token, expires_at = create_verification(user)
+    verify_url = f"{_app_base_url()}/verify-email/{raw_token}"
+
+    display_name = user.get("firstName") or user.get("username") or "there"
+    try:
+        send_email_verification_email(
+            recipient_email=user.get("email", ""),
+            display_name=display_name,
+            verify_url=verify_url,
+            expires_hours=TOKEN_TTL_HOURS,
+        )
+    except ValueError as e:
+        logger.error("[EMAIL-VERIFY] configuration error: %s", e)
+        return (jsonify({"error": str(e)}), 500, None)
+    except Exception as e:
+        logger.error("[EMAIL-VERIFY] failed to send verification email: %s", e)
+        return (
+            jsonify({"error": "Failed to send the verification email. Please try again."}),
+            500,
+            None,
+        )
+    return (None, None, expires_at)
+
+
+@app.route("/api/users/<user_id>/send-verification", methods=["POST"])
+def api_send_verification(user_id: str):
+    """Sends a verification email to the user identified by user_id.
+
+    Admins may send for ANY user (User Management page). A regular user may
+    only send for their OWN account (Profile page). The user's status stays
+    Unverified until they click the emailed link — this endpoint never sets
+    email_verified.
+    """
+    caller, error = _authenticated_identity()
+    if error:
+        return error
+
+    user = _get_user_by_id(user_id)
+    if not user:
+        return jsonify({"error": "User not found."}), 404
+
+    is_admin = str(caller.get("accountType", "")).strip().lower() == "administrator"
+    is_self = caller.get("id", "") == user.get("id", "")
+    if not (is_admin or is_self):
+        return jsonify({"error": "You do not have access to this user."}), 403
+
+    if is_email_verified(user):
+        return jsonify({
+            "status": "already_verified",
+            "message": "This email address is already verified.",
+            "email_verified": True,
+        }), 200
+
+    error_response, error_status, expires_at = _send_verification_email_or_error(user)
+    if error_response:
+        return error_response, error_status
+
+    log_from_authenticated_user(
+        event=USER_UPDATED,
+        action="Send Verification Email",
+        application=APPLICATION_MEDINSPECT,
+        module=MODULE_USER_MANAGEMENT if is_admin else MODULE_AUTHENTICATION,
+        authenticated_user=caller,
+        status=STATUS_SUCCESS,
+        description=(
+            f"Verification email sent. Email={user.get('email', '')}; "
+            f"ExpiresAt={expires_at}"
+        ),
+        entity_type="User",
+        entity_id=user.get("id", ""),
+    )
+
+    return jsonify({
+        "status": "sent",
+        "message": f"Verification email sent to {user.get('email', '')}.",
+        "email_verified": False,
+        "expiresAt": expires_at,
+    }), 200
+
+
+@app.route("/verify-email/<token>", methods=["GET"])
+def verify_email_page(token: str):
+    """Verification link target — validates the token, marks the email
+    verified, and shows a styled result page. No user information beyond
+    the outcome is revealed (no enumeration)."""
+    outcome = consume_verification(token)
+
+    if outcome["status"] == "success":
+        title = "Email Verified Successfully"
+        message = "Your email address has been verified."
+        color = "#2e7d32"
+        icon = "&#10003;"
+    elif outcome["status"] == "expired":
+        title = "Verification Link Expired"
+        message = "Please request a new verification email."
+        color = "#ef6c00"
+        icon = "!"
+    else:
+        # invalid covers: unknown, tampered, already used — same response
+        # for all, so nothing about token existence is revealed.
+        title = "Invalid Verification Link"
+        message = (
+            "This verification link is not valid. "
+            "Please request a new verification email."
+        )
+        color = "#c62828"
+        icon = "&#10005;"
+
+    base = os.getenv("APP_BASE_URL", "").strip().rstrip("/")
+    login_href = (base + "/login") if base else "/login"
+
+    return render_template_string(f"""
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>{title}</title>
+<style>
+  body {{ font-family: 'Segoe UI', Arial, sans-serif; background: #f4f5fb;
+         display: flex; align-items: center; justify-content: center;
+         min-height: 100vh; margin: 0; }}
+  .card {{ background: #fff; max-width: 480px; width: 90%; padding: 48px 40px;
+          border-radius: 16px; text-align: center;
+          box-shadow: 0 12px 35px rgba(42,39,110,.12); }}
+  .icon {{ width: 64px; height: 64px; line-height: 64px; border-radius: 50%;
+          background: {color}1A; color: {color}; font-size: 32px;
+          font-weight: 700; margin: 0 auto 18px; }}
+  h1 {{ font-size: 20px; color: #2A276E; margin: 0 0 10px; }}
+  p {{ color: #535a62; font-size: 14px; margin: 0 0 24px; }}
+  a.btn {{ background: #2A276E; color: #fff; padding: 10px 26px;
+          border-radius: 8px; text-decoration: none; font-weight: 600;
+          display: inline-block; }}
+</style></head>
+<body>
+  <div class="card">
+    <div class="icon">{icon}</div>
+    <h1>{title}</h1>
+    <p>{message}</p>
+    <a class="btn" href="{login_href}">Go to Login</a>
+  </div>
+</body></html>
+"""), 200
+
+
+@app.route("/api/users/me/verification-status", methods=["GET"])
+def api_my_verification_status():
+    """Lightweight status check for the Profile page — reads the same
+    email_verified field the User Management page uses."""
+    caller, error = _authenticated_identity()
+    if error:
+        return error
+
+    user = _get_user_by_id(caller.get("id", ""))
+    if not user:
+        return jsonify({"error": "User not found."}), 404
+
+    return jsonify({
+        "email_verified": is_email_verified(user),
+        "emailVerifiedAt": user.get("emailVerifiedAt"),
+    }), 200
+
+
 @app.route("/api/<resource>/<resource_id>", methods=["GET", "PUT", "DELETE"])
 def api_resource_item(resource, resource_id):
     if resource not in ALLOWED_RESOURCE_TYPES:
@@ -1142,6 +1367,20 @@ def api_resource_item(resource, resource_id):
 
     # Hash plaintext passwords on user create/update. Already-hashed values
     # (e.g. round-tripped from the DB) are left untouched.
+    # Merge with the stored document so partial updates (edit user, enable /
+    # disable, etc. — which don't send a password) never wipe the password or
+    # other fields. Without this, upserting the partial payload would replace
+    # the whole document and all future logins would 401.
+    if resource == "users" and original_user:
+        for _k, _v in original_user.items():
+            if _k not in validated:
+                validated[_k] = _v
+        # Never reset verification status on a plain profile edit — only the
+        # verification link (consume_verification) may flip it to True.
+        if "email_verified" not in payload:
+            validated["email_verified"] = original_user.get("email_verified", False)
+        if "emailVerifiedAt" not in payload and "emailVerifiedAt" in original_user:
+            validated["emailVerifiedAt"] = original_user.get("emailVerifiedAt")
     if resource == "users" and isinstance(validated.get("password"), str) and not is_password_hashed(validated["password"]):
         validated["password"] = hash_password(validated["password"])
 

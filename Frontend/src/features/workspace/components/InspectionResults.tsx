@@ -123,6 +123,50 @@ export type CharacterDifference = {
 };
 
 /**
+ * Ligature normalization for the character-comparison layer ONLY.
+ *
+ * PDFs frequently encode "fl", "fi", etc. as a single ligature glyph
+ * (U+FB00–U+FB04). PyMuPDF usually expands these to plain text during
+ * extraction, but when a ligature survives into a finding's master/sample
+ * strings, the character panel would compare one glyph against two plain
+ * characters and render it as one box on one row and two boxes on the
+ * other. Expanding ligatures here makes both sides align character-for-
+ * character. Extraction, matching, checkers and reports are NOT touched —
+ * this runs purely on the display/comparison strings.
+ *
+ * Only the Unicode ligature range is rewritten; all other text (accents,
+ * symbols, CJK, etc.) passes through unchanged, so normal PDF text is
+ * never corrupted.
+ */
+const LIGATURE_MAP: Record<string, string> = {
+  "\uFB00": "ff", // ﬀ
+  "\uFB01": "fi", // ﬁ
+  "\uFB02": "fl", // ﬂ
+  "\uFB03": "ffi", // ﬃ
+  "\uFB04": "ffl", // ﬄ
+};
+
+function normalizeLigatures(text: string): string {
+  if (!text) return text;
+  // Fast path: skip strings with no ligature-range characters at all.
+  let hasLigature = false;
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (code >= 0xfb00 && code <= 0xfb04) {
+      hasLigature = true;
+      break;
+    }
+  }
+  if (!hasLigature) return text;
+
+  let out = "";
+  for (const ch of text) {
+    out += LIGATURE_MAP[ch] ?? ch;
+  }
+  return out;
+}
+
+/**
  * Computes a character-level alignment between two strings
  * using a dynamic-programming (Levenshtein) approach.
  *
@@ -133,6 +177,11 @@ function calculateCharacterDifferences(
   master: string,
   sample: string
 ): CharacterDifference[] {
+  // Normalize ligatures so a single ﬂ glyph compares as "f","l" —
+  // one box per character on BOTH rows (see normalizeLigatures above).
+  master = normalizeLigatures(master);
+  sample = normalizeLigatures(sample);
+
   const m = master.length;
   const n = sample.length;
 
@@ -281,7 +330,7 @@ type InspectionResultsProps = {
   masterFile: File;
   sampleFile: File;
   selectedDifference?: InspectionDifference | null;
-  onDifferenceSelect?: (difference: InspectionDifference) => void;
+  onDifferenceSelect?: (difference: InspectionDifference | null) => void;
 };
 
 export default function InspectionResults({
@@ -309,12 +358,22 @@ export default function InspectionResults({
     null;
 
   const handleSelect = useCallback((difference: InspectionDifference) => {
+    // Toggle: clicking the already-selected difference deselects it so the
+    // PDF returns to its normal (zoomed-out) view.
+    if (effectiveSelectedId === difference.id) {
+      if (onDifferenceSelect) {
+        onDifferenceSelect(null);
+      } else {
+        setInternalSelectedId(null);
+      }
+      return;
+    }
     if (onDifferenceSelect) {
       onDifferenceSelect(difference);
     } else {
       setInternalSelectedId(difference.id);
     }
-  }, [onDifferenceSelect]);
+  }, [onDifferenceSelect, effectiveSelectedId]);
 
   const differenceCount = result.totalDifferences;
 
@@ -1301,9 +1360,12 @@ export default function InspectionResults({
                   key={difference.id}
                   hover
                   selected={isSelected}
-                  onClick={() => handleSelect(difference)}
+                  // NOTE: navigation is intentionally NOT on the row. Only
+                  // the ID / Master / Sample cells jump to the difference in
+                  // the PDF viewers below — clicking inside the Level or
+                  // Comment cells (to pick a level/comment) must never
+                  // redirect the viewers (user-experience bug fix).
                   sx={{
-                    cursor: "pointer",
                     bgcolor: isSelected ? "rgba(42, 39, 110, 0.06)" : "transparent",
 
                     "&:hover": {
@@ -1316,24 +1378,29 @@ export default function InspectionResults({
                   </TableCell>
 
                   <TableCell
+                    onClick={() => handleSelect(difference)}
                     sx={{
                       fontSize: 14,
                       color: "#535a62",
+                      cursor: "pointer",
                     }}
                   >
                     {difference.id}
                   </TableCell>
 
                   <TableCell
+                    onClick={() => handleSelect(difference)}
                     sx={{
                       fontSize: 14,
                       color: "#535a62",
+                      cursor: "pointer",
                     }}
                   >
                     {difference.type}
                   </TableCell>
 
                   <TableCell
+                    onClick={() => handleSelect(difference)}
                     sx={{
                       fontSize: 14,
                       color: "#535a62",
@@ -1341,6 +1408,7 @@ export default function InspectionResults({
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
+                      cursor: "pointer",
                     }}
                     title={difference.master}
                   >
@@ -1348,6 +1416,7 @@ export default function InspectionResults({
                   </TableCell>
 
                   <TableCell
+                    onClick={() => handleSelect(difference)}
                     sx={{
                       fontSize: 14,
                       color: "#535a62",
@@ -1355,6 +1424,7 @@ export default function InspectionResults({
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
+                      cursor: "pointer",
                     }}
                     title={difference.sample}
                   >

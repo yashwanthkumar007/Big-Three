@@ -20,6 +20,8 @@ export type UserProfile = {
   accountStatus: "Active" | "Inactive" | "Locked";
   company: string;
   emailNotificationsEnabled: boolean;
+  /** Email verification status — single source of truth is the backend `email_verified` field. */
+  emailVerified?: boolean;
 };
 
 export type RunningInspection = {
@@ -364,5 +366,44 @@ export async function revokeApiToken(tokenId: string): Promise<void> {
     if (!isBackendUnavailable(error)) throw error;
 
     writeTokens(readTokens().filter((t) => t.id !== tokenId));
+  }
+}
+
+/**
+ * POST /api/users/<user_id>/send-verification — sends a verification email.
+ *
+ * A user may only send for their OWN account. The backend enforces this and
+ * never marks the email verified — only the emailed link does that.
+ */
+export async function sendVerificationEmail(userId: string): Promise<{
+  status: "sent" | "already_verified";
+  message: string;
+  email_verified: boolean;
+  expiresAt?: string;
+}> {
+  const session = getSession();
+  const userEmail = session?.email ?? "";
+
+  try {
+    const { data } = await api.post<{
+      status: "sent" | "already_verified";
+      message: string;
+      email_verified: boolean;
+      expiresAt?: string;
+    }>(`/api/users/${encodeURIComponent(userId)}/send-verification`, undefined, {
+      headers: { "X-User-Email": userEmail },
+    });
+    return data;
+  } catch (error) {
+    if (!isBackendUnavailable(error)) throw error;
+
+    // Backend unavailable -> simulate success in offline mode.
+    await delay(600);
+    return {
+      status: "sent",
+      message: "Verification email sent (offline mode).",
+      email_verified: false,
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    };
   }
 }
