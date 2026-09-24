@@ -4,6 +4,21 @@ run. Everything validated individually against real files (Test1, Test2)
 gets wired together here: extraction -> matching -> checkers -> Location
 grouping -> combined findings.
 
+Enabled formatting detections:
+    - Font Type
+    - Mixed Font
+    - Bold
+    - Italic
+    - Underline
+    - Color
+
+Disabled legacy text/whitespace detections:
+    - Case
+    - Hyphen
+    - Space
+
+Master is treated as the source of truth.
+
 PATCHED: optional Doc Intelligence gap-fill (ENABLE_DI_GAPFILL). When
 enabled, DI is called ONCE per page for each file, and the resulting
 gap rows (text PyMuPDF's live-text layer has zero record of — confirmed
@@ -15,6 +30,8 @@ identical to before this patch.
 
 import sys
 import os
+import time
+import fitz
 import pandas as pd
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -22,11 +39,13 @@ from src.components.extractors.pdf_extractor import extract_lines
 from src.components.matcher import match_blocks
 from src.checkers.content import check_change
 from src.checkers.structure import check_deletions, check_insertions
-from src.checkers.formatting import check_bold, check_color
+from src.checkers.formatting import check_formatting
 from src.checkers.whitespace import check_case, check_hyphen, check_space
 from src.checkers.position import check_location
 from src.checkers.table_structure_v2 import extract_table_rows, check_table_rows_v2
+from src.components.cache import inspection_cache
 from src.review.grouping import group_location_findings
+from src.pipelines.report_builder import REPORT_DPI, _scale_bbox
 from src.exception import PipelineException
 from src.logger import logger
 
@@ -40,6 +59,36 @@ from src.logger import logger
 # whenever the user's Color filter is enabled (see the color_enabled branch
 # below), so ticking the Color checkbox actually detects color differences.
 ENABLE_FORMATTING_CHECKERS = False
+
+# The six formatting detections below are enabled independently and are
+# NOT gated by ENABLE_FORMATTING_CHECKERS (that switch only keeps the
+# legacy Case/Hyphen/Space block gated off). Each formatting checker runs
+# whenever BOTH its ENABLE_*_CHECKER flag AND its Difference-Filter key
+# are on.
+
+# Font Type
+ENABLE_FONT_TYPE_CHECKER = True
+
+# Mixed Font
+ENABLE_MIXED_FONT_CHECKER = True
+
+# Bold
+ENABLE_BOLD_CHECKER = True
+
+# Italic
+ENABLE_ITALIC_CHECKER = True
+
+# Underline
+ENABLE_UNDERLINE_CHECKER = True
+
+# Color
+ENABLE_COLOR_CHECKER = True
+
+# Legacy text/whitespace detections — currently disabled (not part of the
+# six-formatting set).
+ENABLE_CASE_CHECKER = False
+ENABLE_HYPHEN_CHECKER = False
+ENABLE_SPACE_CHECKER = False
 
 # Set True to call Doc Intelligence and fill in text PyMuPDF's live-text
 # layer completely missed (vector-outlined labels). Off by default —
@@ -88,6 +137,8 @@ FINDING_TYPE_TO_FILTER = {
     "Space": "space",
     "Size": "size",
     "Underline": "underline",
+    "Italic": "italic",
+    "Mixed Font": "mixedFont",
     "Font Type": "fontType",
 }
 
@@ -117,11 +168,16 @@ def _findings_for_enabled(findings: list, filters: dict) -> list:
     return [f for f in findings if _type_enabled(f)]
 
 
-def _table_region_bboxes(pdf_path: str, extra_lines: list = None) -> dict:
-    """Returns {page_number: [(x0,y0,x1,y1), ...]} — the ACTUAL bounding
+def _table_region_bboxes(pdf_path: str, extra_lines: list = None) -> tuple:
+    """Returns (regions, rows).
+
+    regions: {page_number: [(x0,y0,x1,y1), ...]} — the ACTUAL bounding
     box of every individual label/value cell found on the page (one box
     per row's label, one per row's value), NOT one big rectangle covering
     the table's overall extent.
+
+    rows: the raw rows from extract_table_rows, returned so the caller can
+    reuse them for the table checker instead of reopening/re-parsing the PDF.
 
     Confirmed bug this fixes: text that sits geometrically "inside" the
     table's overall area but was never claimed by any specific row (e.g.
@@ -137,7 +193,14 @@ def _table_region_bboxes(pdf_path: str, extra_lines: list = None) -> dict:
     extra_lines: optional DI gap-fill lines, passed through to
     extract_table_rows so DI-recovered cells are excluded too."""
     regions = {}
-    rows = extract_table_rows(pdf_path, page_number=0, extra_lines=extra_lines)  # single-page files for now
+    if extra_lines is None:
+        # No DI gap-fill: table rows are cached so Crop Compare reuses the
+        # same rows instead of re-parsing the PDF per crop request.
+        rows = inspection_cache.get_or_extract_table_rows(
+            pdf_path, 0, lambda p, pg: extract_table_rows(p, page_number=pg)
+        )
+    else:
+        rows = extract_table_rows(pdf_path, page_number=0, extra_lines=extra_lines)  # single-page files for now
     if not rows:
         logger.info(
             f"WARNING: table_structure_v2 found ZERO rows on {pdf_path} — "
@@ -146,7 +209,7 @@ def _table_region_bboxes(pdf_path: str, extra_lines: list = None) -> dict:
             f"Content will still be checked via the general line matcher, but "
             f"WITHOUT structured row labels (row: X) on any findings from this table."
         )
-        return regions
+        return regions, rows
 
     boxes = []
     for r in rows:
@@ -157,7 +220,7 @@ def _table_region_bboxes(pdf_path: str, extra_lines: list = None) -> dict:
             boxes.append((vx0 - 1, vy0 - 1, vx1 + 1, vy1 + 1))
 
     regions[0] = boxes
-    return regions
+    return regions, rows
 
 
 def _boxes_overlap(box_a, box_b) -> bool:
@@ -221,10 +284,11 @@ def run_text_inspection(master_path: str, sample_path: str, filters: dict = None
 
     filters: optional dict of {"<filter key>": bool} matching the frontend
         Difference Filter checkboxes (case, change, deletion, hyphen,
-        insertion, location, bold, color, fontType, space, size,
-        underline). Disabled checkers are SKIPPED entirely — no findings
-        of that type are produced or reported. When None (legacy callers),
-        all filters default to enabled and behavior is unchanged.
+        insertion, location, bold, italic, underline, color, fontType,
+        mixedFont, space, size). Disabled checkers are SKIPPED entirely —
+        no findings of that type are produced or reported. When None
+        (legacy callers), all filters default to enabled and behavior is
+        unchanged.
 
     Returns:
         {
@@ -249,8 +313,11 @@ def run_text_inspection(master_path: str, sample_path: str, filters: dict = None
         hyphen_enabled = should_run("hyphen")
         space_enabled = should_run("space")
         bold_enabled = should_run("bold")
+        italic_enabled = should_run("italic")
+        underline_enabled = should_run("underline")
         color_enabled = should_run("color")
         font_type_enabled = should_run("fontType")
+        mixed_font_enabled = should_run("mixedFont")
 
         enabled_types = []
         if change_enabled:
@@ -269,17 +336,28 @@ def run_text_inspection(master_path: str, sample_path: str, filters: dict = None
             enabled_types.append("Space")
         if bold_enabled:
             enabled_types.append("Bold")
+        if italic_enabled:
+            enabled_types.append("Italic")
+        if underline_enabled:
+            enabled_types.append("Underline")
         if color_enabled:
             enabled_types.append("Color")
         if font_type_enabled:
             enabled_types.append("Font Type")
+        if mixed_font_enabled:
+            enabled_types.append("Mixed Font")
 
         logger.info(
             f"Enabled finding types: {', '.join(enabled_types) if enabled_types else '(none)'}"
         )
 
-        master_lines = extract_lines(master_path)
-        sample_lines = extract_lines(sample_path)
+        t0 = time.perf_counter()
+        # Extraction is cached (fingerprint-validated on disk), so the full
+        # inspection populates the cache and subsequent Crop Compare requests
+        # reuse it instead of re-parsing the PDFs.
+        master_lines = inspection_cache.get_or_extract_lines(master_path, extract_lines)
+        sample_lines = inspection_cache.get_or_extract_lines(sample_path, extract_lines)
+        logger.info(f"[timing] extract_lines: {time.perf_counter() - t0:.2f}s")
 
         # DI gap-fill (optional) — run ONCE per file here, before table
         # exclusion, so both the general matcher and the table checker
@@ -298,22 +376,31 @@ def run_text_inspection(master_path: str, sample_path: str, filters: dict = None
         # Bold/Color/Location don't also run on it and produce nonsense.
         # DI gap rows are passed through so vector-outlined labels can be
         # found without touching the reliable rectangle-detection logic.
-        master_table_regions = _table_region_bboxes(master_path, extra_lines=master_di_extra)
-        sample_table_regions = _table_region_bboxes(sample_path, extra_lines=sample_di_extra)
+        # The extracted rows are returned and REUSED by the table checker
+        # below, so each file's get_drawings()/get_text() runs only twice
+        # total (once in extract_lines, once here) instead of three times.
+        t0 = time.perf_counter()
+        master_table_regions, master_table_rows = _table_region_bboxes(master_path, extra_lines=master_di_extra)
+        sample_table_regions, sample_table_rows = _table_region_bboxes(sample_path, extra_lines=sample_di_extra)
         table_findings = check_table_rows_v2(
             master_path, sample_path,
             master_extra_lines=master_di_extra,
             sample_extra_lines=sample_di_extra,
             enabled_types=enabled_types,
+            master_rows=master_table_rows,
+            sample_rows=sample_table_rows,
         )
+        logger.info(f"[timing] table extraction+check: {time.perf_counter() - t0:.2f}s")
         table_location = [f for f in table_findings if f["type"] == "Location"]
         table_other = [f for f in table_findings if f["type"] != "Location"]
 
         master_lines = _exclude_table_region(master_lines, master_table_regions)
         sample_lines = _exclude_table_region(sample_lines, sample_table_regions)
 
+        t0 = time.perf_counter()
         match_result = match_blocks(master_lines, sample_lines)
         matched_pairs = match_result["matched_pairs"]
+        logger.info(f"[timing] match_blocks: {time.perf_counter() - t0:.2f}s")
 
         findings = []
         findings += table_other
@@ -324,20 +411,34 @@ def run_text_inspection(master_path: str, sample_path: str, filters: dict = None
         if insertion_enabled:
             findings += check_insertions(match_result["unmatched_sample"], matched_pairs=matched_pairs)
 
-        # Color detection runs as soon as the user enables the Color filter,
-        # independent of the ENABLE_FORMATTING_CHECKERS pairing-confidence gate
-        # — the whole point is that ticking the Color checkbox actually detects
-        # color differences. (gapless/OCR rows with empty spans are skipped
-        # inside check_color, and _findings_for_enabled below still drops any
-        # "Color" finding if the filter got turned off.)
-        if color_enabled:
-            findings += check_color(matched_pairs)
+        # The six formatting detections below run independently of the
+        # legacy ENABLE_FORMATTING_CHECKERS pairing-confidence gate — each
+        # checker runs whenever BOTH its ENABLE_*_CHECKER flag AND its
+        # Difference-Filter key are enabled. (gapless/OCR rows with empty
+        # spans are skipped inside the checkers, and _findings_for_enabled
+        # below still drops any finding whose filter got turned off.)
+        #
+        # All enabled formatting detections are produced in a SINGLE scan
+        # over matched_pairs (check_formatting) — one span reconstruction,
+        # one text-similarity computation and one character alignment shared
+        # by every enabled finding type, instead of each checker re-scanning
+        # the pairs independently.
+        t0 = time.perf_counter()
+        formatting_enabled = {
+            "Font Type": ENABLE_FONT_TYPE_CHECKER and font_type_enabled,
+            "Mixed Font": ENABLE_MIXED_FONT_CHECKER and mixed_font_enabled,
+            "Bold": ENABLE_BOLD_CHECKER and bold_enabled,
+            "Italic": ENABLE_ITALIC_CHECKER and italic_enabled,
+            "Underline": ENABLE_UNDERLINE_CHECKER and underline_enabled,
+            "Color": ENABLE_COLOR_CHECKER and color_enabled,
+        }
+        findings += check_formatting(matched_pairs, formatting_enabled)
+        logger.info(f"[timing] formatting checkers: {time.perf_counter() - t0:.2f}s")
 
-        # The remaining formatting/whitespace checkers additionally require the
-        # master ENABLE_FORMATTING_CHECKERS switch (pairing confidence gate)
-        # AND the individual filter being enabled.
-        if ENABLE_FORMATTING_CHECKERS and bold_enabled:
-            findings += check_bold(matched_pairs)
+        # Legacy text/whitespace checkers are NOT part of the six-formatting
+        # set — they remain gated behind the master ENABLE_FORMATTING_
+        # CHECKERS switch (default False, i.e. currently disabled) AND the
+        # individual filter being enabled.
         if ENABLE_FORMATTING_CHECKERS and case_enabled:
             findings += check_case(matched_pairs)
         if ENABLE_FORMATTING_CHECKERS and hyphen_enabled:
@@ -414,3 +515,191 @@ def save_report(result: dict, output_dir: str):
         path = os.path.join(output_dir, "location_groups.csv")
         groups_df.to_csv(path, index=False)
         logger.info(f"Saved report: {path}")
+
+
+# ============================================================================
+# CROP TEXT INSPECTION PIPELINE
+# ============================================================================
+# Runs the SAME text inspection logic as run_text_inspection() above, but
+# scoped to a user-selected region of a single page, for speed. Originally
+# lived in pipelines/crop_text_inspection/crop_text_inspection_pipeline.py;
+# merged here so both entry points share one file. Reuses, without
+# modifying:
+#   - extract_lines()                              (pdf_extractor.py)
+#   - match_blocks()                                (matcher.py)
+#   - check_change/deletions/insertions             (content.py, structure.py)
+#   - check_location()                              (position.py)
+#   - group_location_findings()                     (grouping.py)
+#   - extract_table_rows() / check_table_rows_v2()  (table_structure_v2.py)
+#   - report_builder's dpi<->pdf-point scaling convention (REPORT_DPI, _scale_bbox)
+#
+# Does NOT call run_text_inspection() — reimplements the same sequence
+# at a smaller scope (filtered lines) instead of running full-page and
+# filtering findings afterward, since that wastes time on far more
+# matcher/checker work than needed for a small crop.
+
+# Padding (in PDF points) added around the user's crop box before running
+# extraction/matching, so a line that's only partly inside the crop still
+# finds its true counterpart on the other side instead of being reported
+# as a false Deletion/Insertion at the crop edge. Findings are still
+# filtered back down to the EXACT crop box before being returned — the
+# margin only helps matching, it never widens what's reported.
+CROP_MARGIN_POINTS = 75
+
+
+def box_px_to_pdf_rect(box_px: dict, dpi: int = REPORT_DPI) -> fitz.Rect:
+    """
+    Inverse of report_builder._scale_bbox() — converts a pixel box (in
+    the SAME DPI=150 pixel space the frontend already uses for
+    master_box/sample_box) into a PDF-point fitz.Rect.
+    """
+    scale = dpi / 72
+    return fitz.Rect(
+        box_px["x"] / scale,
+        box_px["y"] / scale,
+        (box_px["x"] + box_px["width"]) / scale,
+        (box_px["y"] + box_px["height"]) / scale,
+    )
+
+
+def _filter_lines_to_region(lines_df: pd.DataFrame, page_number: int, region: fitz.Rect) -> pd.DataFrame:
+    if len(lines_df) == 0:
+        return lines_df
+    mask = (lines_df["page"] == page_number) & lines_df["bbox"].apply(
+        lambda b: _boxes_overlap(tuple(b), tuple(region))
+    )
+    return lines_df[mask].reset_index(drop=True)
+
+
+def _filter_table_rows_to_region(rows: list, region: fitz.Rect) -> list:
+    return [
+        r for r in rows
+        if _boxes_overlap(r["label_bbox"], tuple(region)) or _boxes_overlap(r["value_bbox"], tuple(region))
+    ]
+
+
+def _row_in_table(row, table_rows) -> bool:
+    return any(
+        _boxes_overlap(tuple(row["bbox"]), r["label_bbox"]) or _boxes_overlap(tuple(row["bbox"]), r["value_bbox"])
+        for r in table_rows
+    )
+
+
+def run_crop_text_inspection(master_path: str, sample_path: str, page_number: int, box_px: dict, dpi: int = REPORT_DPI) -> dict:
+    """
+    Runs Text Inspection scoped to a single page + cropped region only.
+
+    Returns:
+        {
+            "findings": [...pixel-scaled findings, same shape as
+                          report_builder.build_report()'s findings...],
+            "match_stats": {"matched_pairs": N, "unmatched_master": N, "unmatched_sample": N},
+            "region": {"page": ..., "box_px": ...},
+        }
+    """
+    try:
+        logger.info(
+            f"Starting Crop Text Inspection: master={master_path}, sample={sample_path}, "
+            f"page={page_number}, box_px={box_px}"
+        )
+
+        crop_rect = box_px_to_pdf_rect(box_px, dpi)
+        expanded_rect = crop_rect + (-CROP_MARGIN_POINTS, -CROP_MARGIN_POINTS, CROP_MARGIN_POINTS, CROP_MARGIN_POINTS)
+
+        master_lines = inspection_cache.get_or_extract_lines(master_path, extract_lines)
+        sample_lines = inspection_cache.get_or_extract_lines(sample_path, extract_lines)
+
+        master_lines = _filter_lines_to_region(master_lines, page_number, expanded_rect)
+        sample_lines = _filter_lines_to_region(sample_lines, page_number, expanded_rect)
+
+        master_page_rows = inspection_cache.get_or_extract_table_rows(
+            master_path, page_number, lambda p, pg: extract_table_rows(p, page_number=pg)
+        )
+        sample_page_rows = inspection_cache.get_or_extract_table_rows(
+            sample_path, page_number, lambda p, pg: extract_table_rows(p, page_number=pg)
+        )
+        master_table_rows = _filter_table_rows_to_region(master_page_rows, expanded_rect)
+        sample_table_rows = _filter_table_rows_to_region(sample_page_rows, expanded_rect)
+
+        table_findings = []
+        if master_table_rows or sample_table_rows:
+            all_table_findings = check_table_rows_v2(
+                master_path, sample_path,
+                page_number=page_number,
+                master_rows=master_page_rows,
+                sample_rows=sample_page_rows,
+            )
+            table_findings = [
+                f for f in all_table_findings
+                if (f.get("master_bbox") and _boxes_overlap(f["master_bbox"], tuple(expanded_rect)))
+                or (f.get("sample_bbox") and _boxes_overlap(f["sample_bbox"], tuple(expanded_rect)))
+            ]
+
+        if master_table_rows:
+            master_lines = master_lines[~master_lines.apply(lambda r: _row_in_table(r, master_table_rows), axis=1)].reset_index(drop=True)
+        if sample_table_rows:
+            sample_lines = sample_lines[~sample_lines.apply(lambda r: _row_in_table(r, sample_table_rows), axis=1)].reset_index(drop=True)
+
+        match_result = match_blocks(master_lines, sample_lines)
+        matched_pairs = match_result["matched_pairs"]
+
+        findings = []
+        findings += [f for f in table_findings if f["type"] != "Location"]
+        findings += check_change(matched_pairs)
+        findings += check_deletions(match_result["unmatched_master"], matched_pairs=matched_pairs)
+        findings += check_insertions(match_result["unmatched_sample"], matched_pairs=matched_pairs)
+
+        general_location = check_location(matched_pairs)
+        table_location = [f for f in table_findings if f["type"] == "Location"]
+        all_location = table_location + general_location
+
+        # Dominant-shift suppression kept ON (matches main pipeline
+        # default) — DOMINANT_SHIFT_MIN_SIZE is 5, so it will only ever
+        # suppress if the crop genuinely contains 5+ elements sharing the
+        # same shift, which is still meaningfully "systematic" even at
+        # crop scope. Small crops with <5 Location findings are
+        # unaffected either way.
+        location_grouped = group_location_findings(all_location, suppress_dominant=True)
+        findings += location_grouped["ungrouped"]
+
+        # Hard filter: only report findings whose box genuinely falls
+        # inside the ORIGINAL (non-expanded) crop. The margin above was
+        # only to help matching find true pairs near the edge — it must
+        # never widen what's actually reported to the user.
+        def _in_crop(f):
+            for key in ("master_bbox", "sample_bbox"):
+                box = f.get(key)
+                if box and _boxes_overlap(tuple(box), tuple(crop_rect)):
+                    return True
+            return False
+
+        findings = [f for f in findings if _in_crop(f)]
+
+        findings_out = []
+        for i, f in enumerate(findings, 1):
+            findings_out.append({
+                "id": i,
+                "type": f["type"],
+                "master": f["master"],
+                "sample": f["sample"],
+                "comment": f["comment"],
+                "page": int(f.get("page", page_number)),
+                "master_box": _scale_bbox(f.get("master_bbox"), dpi),
+                "sample_box": _scale_bbox(f.get("sample_bbox"), dpi),
+                "source": f.get("source", "pymupdf"),
+            })
+
+        logger.info(f"Crop Text Inspection complete — {len(findings_out)} finding(s) in region")
+
+        return {
+            "findings": findings_out,
+            "match_stats": {
+                "matched_pairs": len(matched_pairs),
+                "unmatched_master": len(match_result["unmatched_master"]),
+                "unmatched_sample": len(match_result["unmatched_sample"]),
+            },
+            "region": {"page": page_number, "box_px": box_px},
+        }
+
+    except Exception as e:
+        raise PipelineException(f"Crop Text Inspection pipeline failed: {str(e)}", sys)

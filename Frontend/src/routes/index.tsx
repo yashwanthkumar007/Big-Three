@@ -11,6 +11,7 @@ import BarcodeInspectionPage from "@/features/workspace/barcode/BarcodeInspectio
 import NotesInspectionPage from "@/features/workspace/notes/NotesInspectionPage";
 import WorkspacePage from "@/features/workspace/WorkspacePage";
 import DifferenceListPage from "@/features/workspace/components/DifferenceListPage";
+import InspectionResultPage from "@/features/workspace/components/InspectionResultPage";
 import ProfilePage from "@/features/profile/pages/ProfilePage";
 import AdminPage from "@/features/admin/pages/AdminPage";
 import SystemSetupPage from "@/features/admin/pages/SystemSetupPage";
@@ -134,6 +135,20 @@ export const router = createBrowserRouter([
       {
         path: ":inspectionType",
         element: <WorkspacePage />,
+      },
+    ],
+  },
+  {
+    path: "/inspection-result",
+    element: (
+      <ProtectedRoute>
+        <MainLayout />
+      </ProtectedRoute>
+    ),
+    children: [
+      {
+        path: ":inspectionId",
+        element: <InspectionResultPage />,
       },
     ],
   },

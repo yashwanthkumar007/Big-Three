@@ -88,7 +88,26 @@ export const isSessionValid = (): boolean => {
   const expiryTime = Number(expiry);
 
   if (Number.isNaN(expiryTime) || Date.now() > expiryTime) {
-    // Session expired - clear it
+    // Session expired - notify the backend so the auto logout is recorded in
+    // the audit trail, then clear it locally. Fire-and-forget with keepalive
+    // so the request survives the page/route change.
+    if (user.sessionId) {
+      try {
+        fetch("/api/auth/logout", {
+          method: "POST",
+          keepalive: true,
+          headers: {
+            "Content-Type": "application/json",
+            "X-Session-Id": user.sessionId,
+            "X-Logout-Reason": "timeout",
+          },
+        }).catch(() => {
+          // Best-effort only — local expiry proceeds regardless.
+        });
+      } catch {
+        // Ignore — local expiry proceeds regardless.
+      }
+    }
     clearSession();
     return false;
   }

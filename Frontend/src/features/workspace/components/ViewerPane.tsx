@@ -16,6 +16,9 @@ type ViewerPaneProps = {
   naturalWidth?: number;
   naturalHeight?: number;
   zeroBasedPageIndex?: boolean;
+  /** Crop Compare props - forwarded to PdfViewer (master side only). */
+  cropMode?: boolean;
+  onCropComplete?: (page0Based: number, box: { x: number; y: number; width: number; height: number }) => void;
 };
  
 export default function ViewerPane({
@@ -27,6 +30,8 @@ export default function ViewerPane({
   naturalWidth,
   naturalHeight,
   zeroBasedPageIndex,
+  cropMode,
+  onCropComplete,
 }: ViewerPaneProps) {
   const [manualPageNumber, setManualPageNumber] =
     useState(1);
@@ -38,11 +43,31 @@ export default function ViewerPane({
   const [lastSelectedId, setLastSelectedId] =
     useState<number | null>(null);
 
+  const fitPageZoom =
+    naturalWidth && naturalHeight
+      ? Math.max(
+          25,
+          Math.min(
+            100,
+            Math.round(
+              (naturalWidth /
+                Math.max(
+                  naturalWidth,
+                  naturalHeight
+                )) *
+                100
+            )
+          )
+        )
+      : 100;
+
   /*
    * ------------------------------------------------------------
    * When a new difference is selected, zoom to 235% so the
-   * highlighted area is clearly visible. This uses the
-   * "adjusting state during render" pattern to avoid
+   * highlighted area is clearly visible. When it is deselected
+   * (clicking the same difference again), return to the normal
+   * fit-page zoom so the whole page is visible again. This uses
+   * the "adjusting state during render" pattern to avoid
    * cascading renders from effects.
    * ------------------------------------------------------------
    */
@@ -51,6 +76,8 @@ export default function ViewerPane({
 
     if (selectedDifference) {
       setZoom(235);
+    } else {
+      setZoom(fitPageZoom);
     }
   }
  
@@ -94,24 +121,6 @@ export default function ViewerPane({
     selectedPageNumber !== null && selectedPageNumber >= 1
       ? clampPage(selectedPageNumber)
       : clampPage(manualPageNumber);
- 
-  const fitPageZoom =
-    naturalWidth && naturalHeight
-      ? Math.max(
-          25,
-          Math.min(
-            100,
-            Math.round(
-              (naturalWidth /
-                Math.max(
-                  naturalWidth,
-                  naturalHeight
-                )) *
-                100
-            )
-          )
-        )
-      : 100;
  
   return (
     <Paper
@@ -207,6 +216,8 @@ export default function ViewerPane({
           pageNumber={effectivePageNumber}
           zoom={zoom}
           onNumPagesChange={setNumPages}
+          cropMode={cropMode}
+          onCropComplete={onCropComplete}
         />
       </Box>
     </Paper>

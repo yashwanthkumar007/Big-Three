@@ -35,7 +35,6 @@ import {
   Typography,
 } from "@mui/material";
 
-import AddCommentOutlinedIcon from "@mui/icons-material/AddCommentOutlined";
 import GridViewOutlinedIcon from "@mui/icons-material/GridViewOutlined";
 import FilterAltOutlinedIcon from "@mui/icons-material/FilterAltOutlined";
 import VisibilityOffOutlinedIcon from "@mui/icons-material/VisibilityOffOutlined";
@@ -52,13 +51,18 @@ import SwapHorizIcon from "@mui/icons-material/SwapHoriz";
 import FormatListBulletedIcon from "@mui/icons-material/FormatListBulleted";
 import DownloadIcon from "@mui/icons-material/Download";
 import CompareIcon from "@mui/icons-material/Compare";
+import CropFreeIcon from "@mui/icons-material/CropFree";
 
 import ViewerPane from "./ViewerPane";
 import ReportOptionsDialog, {
   type ReportOptions,
 } from "./ReportOptionsDialog";
 import type { BoundingBox } from "@/shared/api/inspectionApi";
-import { shareInspectionReport } from "@/shared/api/inspectionApi";
+import {
+  cropInspect,
+  shareInspectionReport,
+  type CropRunResult,
+} from "@/shared/api/inspectionApi";
 import { truncateFileName } from "@/shared/utils/truncateFileName";
 import { getSession } from "@/shared/utils/auth";
 import {
@@ -69,6 +73,17 @@ import {
   downloadInspectionPdf,
   generateInspectionReportPdfBlob,
 } from "@/shared/utils/pdfReportGenerator";
+import { useSetupConfig } from "@/shared/hooks/useSetupConfig";
+import {
+  configuredLevelOptions,
+  configuredCommentOptions,
+  isEditableCommentPlaceholder,
+} from "@/shared/utils/setupLevels";
+import {
+  getInspectionDifferenceComments,
+  logAuditEvent,
+  updateInspectionDifferenceComment,
+} from "@/features/admin/systemApi";
 
 export type DifferenceType =
   | "Change"
@@ -78,8 +93,10 @@ export type DifferenceType =
   | "Location"
   | "Case"
   | "Bold"
+  | "Italic"
   | "Color"
   | "Font Type"
+  | "Mixed Font"
   | "Size"
   | "Sub/Super"
   | "Underline"
@@ -106,6 +123,50 @@ export type CharacterDifference = {
 };
 
 /**
+ * Ligature normalization for the character-comparison layer ONLY.
+ *
+ * PDFs frequently encode "fl", "fi", etc. as a single ligature glyph
+ * (U+FB00–U+FB04). PyMuPDF usually expands these to plain text during
+ * extraction, but when a ligature survives into a finding's master/sample
+ * strings, the character panel would compare one glyph against two plain
+ * characters and render it as one box on one row and two boxes on the
+ * other. Expanding ligatures here makes both sides align character-for-
+ * character. Extraction, matching, checkers and reports are NOT touched —
+ * this runs purely on the display/comparison strings.
+ *
+ * Only the Unicode ligature range is rewritten; all other text (accents,
+ * symbols, CJK, etc.) passes through unchanged, so normal PDF text is
+ * never corrupted.
+ */
+const LIGATURE_MAP: Record<string, string> = {
+  "\uFB00": "ff", // ﬀ
+  "\uFB01": "fi", // ﬁ
+  "\uFB02": "fl", // ﬂ
+  "\uFB03": "ffi", // ﬃ
+  "\uFB04": "ffl", // ﬄ
+};
+
+function normalizeLigatures(text: string): string {
+  if (!text) return text;
+  // Fast path: skip strings with no ligature-range characters at all.
+  let hasLigature = false;
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (code >= 0xfb00 && code <= 0xfb04) {
+      hasLigature = true;
+      break;
+    }
+  }
+  if (!hasLigature) return text;
+
+  let out = "";
+  for (const ch of text) {
+    out += LIGATURE_MAP[ch] ?? ch;
+  }
+  return out;
+}
+
+/**
  * Computes a character-level alignment between two strings
  * using a dynamic-programming (Levenshtein) approach.
  *
@@ -116,6 +177,11 @@ function calculateCharacterDifferences(
   master: string,
   sample: string
 ): CharacterDifference[] {
+  // Normalize ligatures so a single ﬂ glyph compares as "f","l" —
+  // one box per character on BOTH rows (see normalizeLigatures above).
+  master = normalizeLigatures(master);
+  sample = normalizeLigatures(sample);
+
   const m = master.length;
   const n = sample.length;
 
@@ -264,7 +330,7 @@ type InspectionResultsProps = {
   masterFile: File;
   sampleFile: File;
   selectedDifference?: InspectionDifference | null;
-  onDifferenceSelect?: (difference: InspectionDifference) => void;
+  onDifferenceSelect?: (difference: InspectionDifference | null) => void;
 };
 
 export default function InspectionResults({
@@ -291,13 +357,23 @@ export default function InspectionResults({
     result.differences.find((difference) => difference.id === effectiveSelectedId) ??
     null;
 
-  const handleSelect = (difference: InspectionDifference) => {
+  const handleSelect = useCallback((difference: InspectionDifference) => {
+    // Toggle: clicking the already-selected difference deselects it so the
+    // PDF returns to its normal (zoomed-out) view.
+    if (effectiveSelectedId === difference.id) {
+      if (onDifferenceSelect) {
+        onDifferenceSelect(null);
+      } else {
+        setInternalSelectedId(null);
+      }
+      return;
+    }
     if (onDifferenceSelect) {
       onDifferenceSelect(difference);
     } else {
       setInternalSelectedId(difference.id);
     }
-  };
+  }, [onDifferenceSelect, effectiveSelectedId]);
 
   const differenceCount = result.totalDifferences;
 
@@ -305,15 +381,25 @@ export default function InspectionResults({
   /* Comment / status management                                        */
   /* ------------------------------------------------------------------ */
 
-  const COMMENT_OPTIONS = [
-    "Reviewed",
-    "Approved",
-    "To be verified",
-    "None",
-    "Comment1",
-    "Comment2",
-    "Comment3",
-  ];
+  /**
+   * Admin-configured comments (Setup Levels & Comments page). The default
+   * comment comes first, followed by every non-empty custom comment.
+   */
+  const { data: setupConfig } = useSetupConfig();
+  const configuredComments = useMemo(() => {
+    const options = configuredCommentOptions(setupConfig ?? null);
+    const defaultComment = setupConfig?.comments.default1?.trim();
+    const all = defaultComment ? [defaultComment, ...options] : options;
+    return [...new Set(all)];
+  }, [setupConfig]);
+
+  /** Admin-configured severity levels (non-empty, de-duplicated). */
+  const configuredLevels = useMemo(() => {
+    const options = configuredLevelOptions(setupConfig ?? null).filter(
+      (value) => value && value.trim() !== ""
+    );
+    return [...new Set(options)];
+  }, [setupConfig]);
 
   /**
    * Per-difference comment/status selection from the shared store.
@@ -340,11 +426,6 @@ export default function InspectionResults({
    * These appear in the dropdown as "Comment1", "Comment2", "Comment3".
    */
   const customComments = useUploadStore((state) => state.customComments);
-  const setCustomComments = useUploadStore((state) => state.setCustomComments);
-
-  /** Dialog state for adding a new comment. */
-  const [addCommentOpen, setAddCommentOpen] = useState(false);
-  const [newCommentText, setNewCommentText] = useState("");
 
   const getCommentValue = (differenceId: number) =>
     commentSelections[differenceId] ?? "None";
@@ -353,6 +434,17 @@ export default function InspectionResults({
     setCommentSelections({
       ...commentSelections,
       [differenceId]: value,
+    });
+
+    // Audit: record comment/status selection on a difference (best-effort).
+    void logAuditEvent({
+      event: "DIFFERENCE_COMMENT_UPDATED",
+      action: "Update Difference Comment",
+      module: "Text Inspection",
+      description: `Comment updated for difference ${differenceId} to "${value}".`,
+      inspectionId: result.inspectionId,
+      differenceId,
+      metadata: { comment: value },
     });
   };
 
@@ -364,22 +456,72 @@ export default function InspectionResults({
       ...levelSelections,
       [differenceId]: value,
     });
+
+    // Audit: record level assignment on a difference (best-effort).
+    void logAuditEvent({
+      event: "DIFFERENCE_LEVEL_CHANGED",
+      action: "Update Level",
+      module: "Text Inspection",
+      description: `Level updated for difference ${differenceId} to "${value}".`,
+      inspectionId: result.inspectionId,
+      differenceId,
+      metadata: { level: value },
+    });
   };
 
   /** Difference id currently being edited via double-click. */
   const [editingCommentId, setEditingCommentId] = useState<number | null>(null);
   const [editingCommentText, setEditingCommentText] = useState("");
+  /** The configured placeholder (e.g. "Comment1") that is being replaced. */
+  const [editingPlaceholder, setEditingPlaceholder] = useState("");
+
+  /**
+   * Load user comments persisted in Cosmos DB for THIS inspection so that
+   * reopening an old inspection shows the comments written previously.
+   * They are merged into the shared store, which also feeds the PDF report.
+   */
+  useEffect(() => {
+    const inspectionId = result.inspectionId;
+    if (!inspectionId) {
+      return;
+    }
+    let cancelled = false;
+    void getInspectionDifferenceComments(inspectionId)
+      .then((saved) => {
+        if (cancelled || saved.length === 0) {
+          return;
+        }
+        const restored: Record<number, string> = {};
+        for (const entry of saved) {
+          const userComment = (entry.userComment ?? "").trim();
+          if (userComment) {
+            restored[entry.differenceId] = userComment;
+          }
+        }
+        if (Object.keys(restored).length > 0) {
+          setCommentSelections({
+            ...useUploadStore.getState().commentSelections,
+            ...restored,
+          });
+        }
+      })
+      .catch(() => {
+        /* Non-critical: without persistence the session still works. */
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once per inspection
+  }, [result.inspectionId]);
 
   const handleStartEdit = (difference: InspectionDifference) => {
     const currentValue = getCommentValue(difference.id);
-    // Only allow editing when a Comment1/2/3 is selected
-    if (
-      currentValue === "Comment1" ||
-      currentValue === "Comment2" ||
-      currentValue === "Comment3"
-    ) {
+    // Only allow free-text editing when a "Comment1" / "Comment 2" … style
+    // placeholder is selected — these exist for the user to replace.
+    if (isEditableCommentPlaceholder(currentValue)) {
       setEditingCommentId(difference.id);
-      setEditingCommentText(currentValue);
+      setEditingCommentText("");
+      setEditingPlaceholder(currentValue);
     }
   };
 
@@ -390,23 +532,29 @@ export default function InspectionResults({
         ...commentSelections,
         [differenceId]: trimmed,
       });
+
+      // Persist the user comment so it survives across sessions and is
+      // included when the PDF report is regenerated later.
+      const inspectionId = result.inspectionId;
+      if (inspectionId) {
+        void updateInspectionDifferenceComment(
+          inspectionId,
+          differenceId,
+          {
+            configuredComment: editingPlaceholder,
+            userComment: trimmed,
+          }
+        ).catch((error) => {
+          console.warn(
+            "[DIFF-COMMENT] Failed to persist user comment:",
+            error
+          );
+        });
+      }
     }
     setEditingCommentId(null);
     setEditingCommentText("");
-  };
-
-  const handleAddComment = () => {
-    const trimmed = newCommentText.trim();
-    if (!trimmed) {
-      return;
-    }
-
-    const next = [...customComments, trimmed];
-    // Keep only the latest 3 custom comments
-    setCustomComments(next.length > 3 ? next.slice(next.length - 3) : next);
-
-    setNewCommentText("");
-    setAddCommentOpen(false);
+    setEditingPlaceholder("");
   };
 
   /* ------------------------------------------------------------------ */
@@ -580,6 +728,16 @@ export default function InspectionResults({
     console.log("[DIFFERENCE LIST] Current Level values:", levelSelections);
     console.log("[DIFFERENCE LIST] Current Comment values:", commentSelections);
 
+    // Audit: record that the user opened/viewed the Difference List.
+    void logAuditEvent({
+      event: "DIFFERENCE_VIEWED",
+      action: "View Difference List",
+      module: "Text Inspection",
+      description: `Difference list opened. Inspection ID=${result.inspectionId}`,
+      inspectionId: result.inspectionId,
+      metadata: { totalDifferences: result.differences.length },
+    });
+
     // If a window is already open, focus it instead of opening a duplicate
     if (differenceListWindowRef.current && !differenceListWindowRef.current.closed) {
       console.log("[DIFFERENCE LIST] Existing window status: open");
@@ -665,16 +823,16 @@ export default function InspectionResults({
       )
     : -1;
 
-  const handlePreviousDifference = () => {
+  const handlePreviousDifference = useCallback(() => {
     if (currentDifferenceIndex <= 0) {
       return;
     }
 
     const prev = result.differences[currentDifferenceIndex - 1];
     handleSelect(prev);
-  };
+  }, [currentDifferenceIndex, result.differences, handleSelect]);
 
-  const handleNextDifference = () => {
+  const handleNextDifference = useCallback(() => {
     if (
       currentDifferenceIndex < 0 ||
       currentDifferenceIndex >= result.differences.length - 1
@@ -684,7 +842,7 @@ export default function InspectionResults({
 
     const next = result.differences[currentDifferenceIndex + 1];
     handleSelect(next);
-  };
+  }, [currentDifferenceIndex, result.differences, handleSelect]);
 
   /* ------------------------------------------------------------------ */
   /* Keyboard navigation (ArrowLeft / ArrowRight)                       */
@@ -704,7 +862,7 @@ export default function InspectionResults({
         handleNextDifference();
       }
     },
-    [selectedDifferenceData, currentDifferenceIndex, result.differences]
+    [selectedDifferenceData, handlePreviousDifference, handleNextDifference]
   );
 
   useEffect(() => {
@@ -713,6 +871,64 @@ export default function InspectionResults({
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [handleKeyDown]);
+
+  /* ------------------------------------------------------------------ */
+  /* Crop Compare — region-scoped re-inspection of the Master page      */
+  /* ------------------------------------------------------------------ */
+
+  const [cropMode, setCropMode] = useState(false);
+  const [cropRunning, setCropRunning] = useState(false);
+  const [cropDialogOpen, setCropDialogOpen] = useState(false);
+  const [cropError, setCropError] = useState<string | null>(null);
+  const [cropRegion, setCropRegion] = useState<{
+    page: number;
+    box: BoundingBox;
+  } | null>(null);
+  const [cropResult, setCropResult] = useState<CropRunResult | null>(null);
+
+  /**
+   * Called by the Master PdfViewer when the user finishes dragging a
+   * crop rectangle. Runs the crop-scoped backend pipeline and opens the
+   * Crop Results dialog (kept separate from the full-page difference
+   * table so crop output never mixes into the main findings list).
+   */
+  const handleCropComplete = useCallback(
+    (page0Based: number, box: BoundingBox) => {
+      setCropRegion({ page: page0Based, box });
+      setCropDialogOpen(true);
+      setCropError(null);
+      setCropRunning(true);
+      setCropResult(null);
+
+      cropInspect({
+        inspectionId: result.inspectionId,
+        page: page0Based,
+        box,
+      })
+        .then((data) => {
+          setCropResult(data);
+        })
+        .catch((error: unknown) => {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          setCropError(message);
+        })
+        .finally(() => {
+          setCropRunning(false);
+        });
+    },
+    [result.inspectionId]
+  );
+
+  const handleToggleCropMode = () => {
+    setCropMode((previous) => {
+      if (previous) {
+        // Leaving crop mode: dismiss any open crop dialog too.
+        setCropDialogOpen(false);
+      }
+      return !previous;
+    });
+  };
 
   /* ------------------------------------------------------------------ */
   /* Debug logs                                                         */
@@ -989,6 +1205,35 @@ export default function InspectionResults({
           <VisibilityOffTwoToneIcon fontSize="small" />
         </IconButton>
 
+        {/* Crop Compare — drag a region on the Master page to re-inspect
+            just that region. Text inspection only (the crop pipeline is
+            the text comparison engine). */}
+        {result.inspectionType === "text" && (
+          <Tooltip
+            title={
+              cropMode
+                ? "Crop Compare ON — drag a rectangle on the Master page (click to turn off)"
+                : "Crop Compare — drag a rectangle on the Master page to inspect just that region"
+            }
+            arrow
+          >
+            <IconButton
+              size="small"
+              onClick={handleToggleCropMode}
+              sx={{
+                bgcolor: cropMode ? "#6a1b9a" : "#2A276E",
+                color: "#ffffff",
+                mx: 0.25,
+                "&:hover": {
+                  bgcolor: cropMode ? "#4a148c" : "#1f1d57",
+                },
+              }}
+            >
+              <CropFreeIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        )}
+
         <Box sx={{ flex: 1 }} />
 
         <IconButton size="small">
@@ -1101,34 +1346,7 @@ export default function InspectionResults({
                   borderBottom: "1px solid #cdd2d7",
                 }}
               >
-                <Box
-                  sx={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: 0.5,
-                  }}
-                >
-                  Comment
-                  <Tooltip title="Add comment" arrow>
-                    <IconButton
-                      size="small"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        setAddCommentOpen(true);
-                      }}
-                      sx={{
-                        p: 0.25,
-                        color: "#2A276E",
-                        "&:hover": {
-                          bgcolor: "rgba(42, 39, 110, 0.08)",
-                        },
-                      }}
-                    >
-                      <AddCommentOutlinedIcon fontSize="small" />
-                    </IconButton>
-                  </Tooltip>
-                </Box>
+                Comment
               </TableCell>
             </TableRow>
           </TableHead>
@@ -1142,9 +1360,12 @@ export default function InspectionResults({
                   key={difference.id}
                   hover
                   selected={isSelected}
-                  onClick={() => handleSelect(difference)}
+                  // NOTE: navigation is intentionally NOT on the row. Only
+                  // the ID / Master / Sample cells jump to the difference in
+                  // the PDF viewers below — clicking inside the Level or
+                  // Comment cells (to pick a level/comment) must never
+                  // redirect the viewers (user-experience bug fix).
                   sx={{
-                    cursor: "pointer",
                     bgcolor: isSelected ? "rgba(42, 39, 110, 0.06)" : "transparent",
 
                     "&:hover": {
@@ -1157,24 +1378,29 @@ export default function InspectionResults({
                   </TableCell>
 
                   <TableCell
+                    onClick={() => handleSelect(difference)}
                     sx={{
                       fontSize: 14,
                       color: "#535a62",
+                      cursor: "pointer",
                     }}
                   >
                     {difference.id}
                   </TableCell>
 
                   <TableCell
+                    onClick={() => handleSelect(difference)}
                     sx={{
                       fontSize: 14,
                       color: "#535a62",
+                      cursor: "pointer",
                     }}
                   >
                     {difference.type}
                   </TableCell>
 
                   <TableCell
+                    onClick={() => handleSelect(difference)}
                     sx={{
                       fontSize: 14,
                       color: "#535a62",
@@ -1182,6 +1408,7 @@ export default function InspectionResults({
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
+                      cursor: "pointer",
                     }}
                     title={difference.master}
                   >
@@ -1189,6 +1416,7 @@ export default function InspectionResults({
                   </TableCell>
 
                   <TableCell
+                    onClick={() => handleSelect(difference)}
                     sx={{
                       fontSize: 14,
                       color: "#535a62",
@@ -1196,6 +1424,7 @@ export default function InspectionResults({
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
+                      cursor: "pointer",
                     }}
                     title={difference.sample}
                   >
@@ -1222,10 +1451,13 @@ export default function InspectionResults({
                         }}
                       >
                         <MenuItem value="">None</MenuItem>
-                        <MenuItem value="Low">Low</MenuItem>
-                        <MenuItem value="Medium">Medium</MenuItem>
-                        <MenuItem value="High">High</MenuItem>
-                        <MenuItem value="Critical">Critical</MenuItem>
+                        {configuredLevels
+                          .filter((option) => option !== "None")
+                          .map((option) => (
+                            <MenuItem key={option} value={option}>
+                              {option}
+                            </MenuItem>
+                          ))}
                       </Select>
                     </FormControl>
                   </TableCell>
@@ -1283,11 +1515,31 @@ export default function InspectionResults({
                             );
                           }}
                         >
-                          {COMMENT_OPTIONS.map((option) => (
+                          {configuredComments.map((option) => (
                             <MenuItem key={option} value={option}>
                               {option}
                             </MenuItem>
                           ))}
+
+                          {/* Persisted user comment (e.g. typed via
+                              double-click) that is not one of the configured
+                              options — render it so the Select value is
+                              always valid. */}
+                          {(() => {
+                            const current = getCommentValue(difference.id);
+                            if (
+                              current === "" ||
+                              current === "None" ||
+                              configuredComments.includes(current)
+                            ) {
+                              return null;
+                            }
+                            return (
+                              <MenuItem key={current} value={current}>
+                                {current}
+                              </MenuItem>
+                            );
+                          })()}
 
                           {customComments.length > 0 && (
                             <Divider sx={{ my: 0.5 }} />
@@ -1465,6 +1717,8 @@ export default function InspectionResults({
                 (p) => p.page === (selectedDifferenceData?.page ?? 0)
               )?.masterHeight
             }
+            cropMode={cropMode}
+            onCropComplete={handleCropComplete}
           />
         </Box>
 
@@ -1922,84 +2176,164 @@ export default function InspectionResults({
       </Snackbar>
 
       {/* =========================================================
-          ADD COMMENT DIALOG
+          CROP COMPARE RESULTS DIALOG
+          Shows region-scoped findings from the crop pipeline — kept
+          separate from the main full-page difference table.
          ========================================================= */}
 
       <Dialog
-        open={addCommentOpen}
-        onClose={() => setAddCommentOpen(false)}
-        maxWidth="xs"
+        open={cropDialogOpen}
+        onClose={() => setCropDialogOpen(false)}
+        maxWidth="md"
         fullWidth
       >
         <DialogTitle
           sx={{
-            fontWeight: 700,
-            color: "#2A276E",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            bgcolor: "#2A276E",
+            color: "#ffffff",
           }}
         >
-          Add Comment
+          <Box>
+            <Typography variant="h6" sx={{ fontWeight: 700 }}>
+              Crop Compare Results
+            </Typography>
+            {cropRegion && (
+              <Typography variant="caption" sx={{ opacity: 0.85 }}>
+                Page {cropRegion.page + 1} · region x=
+                {Math.round(cropRegion.box.x)}, y=
+                {Math.round(cropRegion.box.y)}, w=
+                {Math.round(cropRegion.box.width)}, h=
+                {Math.round(cropRegion.box.height)} px (DPI 150)
+              </Typography>
+            )}
+          </Box>
+          <IconButton
+            size="small"
+            onClick={() => setCropDialogOpen(false)}
+            sx={{ color: "#ffffff" }}
+          >
+            <CloseIcon fontSize="small" />
+          </IconButton>
         </DialogTitle>
 
-        <DialogContent>
-          <DialogContentText
-            sx={{
-              mb: 2,
-              color: "#50575e",
-            }}
-          >
-            Enter a comment. It will appear in the Comment dropdown for all
-            differences.
-          </DialogContentText>
+        <DialogContent dividers sx={{ p: 0 }}>
+          {cropRunning ? (
+            <Box sx={{ py: 6, textAlign: "center" }}>
+              <CircularProgress size={32} />
+              <Typography sx={{ mt: 2 }} color="text.secondary">
+                Running crop inspection…
+              </Typography>
+            </Box>
+          ) : cropError ? (
+            <Alert severity="error" sx={{ m: 2 }}>
+              {cropError}
+            </Alert>
+          ) : cropResult ? (
+            <Box>
+              <Box
+                sx={{
+                  px: 2,
+                  py: 1.5,
+                  bgcolor: "#f7f8f9",
+                  borderBottom: "1px solid #e0e0e0",
+                }}
+              >
+                <Typography
+                  variant="body2"
+                  sx={{ fontWeight: 600, color: "#3f4650" }}
+                >
+                  {cropResult.findings.length}{" "}
+                  {cropResult.findings.length === 1 ? "finding" : "findings"} in
+                  the cropped region — matched{" "}
+                  {cropResult.match_stats.matched_pairs} pairs,{" "}
+                  {cropResult.match_stats.unmatched_master} missing in sample,{" "}
+                  {cropResult.match_stats.unmatched_sample} extra in sample
+                </Typography>
+                {cropResult.log_file && (
+                  <Typography variant="caption" color="text.secondary">
+                    Logged to: {cropResult.log_file}
+                  </Typography>
+                )}
+              </Box>
 
-          <TextField
-            autoFocus
-            fullWidth
-            size="small"
-            label="Comment"
-            placeholder="Type your comment..."
-            value={newCommentText}
-            onChange={(event) => setNewCommentText(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                handleAddComment();
-              }
-            }}
-          />
+              {cropResult.findings.length === 0 ? (
+                <Box sx={{ py: 5, textAlign: "center" }}>
+                  <Typography color="text.secondary">
+                    No differences found in the cropped region.
+                  </Typography>
+                </Box>
+              ) : (
+                <TableContainer sx={{ maxHeight: 380 }}>
+                  <Table stickyHeader size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell
+                          sx={{ fontWeight: 700, color: "#50575e", width: 80 }}
+                        >
+                          Type
+                        </TableCell>
+                        <TableCell sx={{ fontWeight: 700, color: "#50575e" }}>
+                          Master
+                        </TableCell>
+                        <TableCell sx={{ fontWeight: 700, color: "#50575e" }}>
+                          Sample
+                        </TableCell>
+                        <TableCell sx={{ fontWeight: 700, color: "#50575e" }}>
+                          Comment
+                        </TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {cropResult.findings.map((finding) => (
+                        <TableRow key={finding.id} hover>
+                          <TableCell>
+                            <Typography
+                              sx={{
+                                fontSize: 12,
+                                fontWeight: 700,
+                                color: "#6a1b9a",
+                                bgcolor: "rgba(106, 27, 154, 0.08)",
+                                borderRadius: 1,
+                                px: 0.75,
+                                py: 0.25,
+                                display: "inline-block",
+                              }}
+                            >
+                              {finding.type}
+                            </Typography>
+                          </TableCell>
+                          <TableCell
+                            sx={{ maxWidth: 220, wordBreak: "break-word" }}
+                          >
+                            {finding.master || "(none)"}
+                          </TableCell>
+                          <TableCell
+                            sx={{ maxWidth: 220, wordBreak: "break-word" }}
+                          >
+                            {finding.sample || "(none)"}
+                          </TableCell>
+                          <TableCell sx={{ wordBreak: "break-word" }}>
+                            {finding.comment}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              )}
+            </Box>
+          ) : null}
         </DialogContent>
 
-        <DialogActions
-          sx={{
-            px: 3,
-            pb: 2,
-          }}
-        >
+        <DialogActions sx={{ px: 3, pb: 2 }}>
           <Button
-            onClick={() => {
-              setNewCommentText("");
-              setAddCommentOpen(false);
-            }}
-            sx={{
-              textTransform: "none",
-              color: "#50575e",
-            }}
+            onClick={() => setCropDialogOpen(false)}
+            sx={{ textTransform: "none", color: "#50575e" }}
           >
-            Cancel
-          </Button>
-
-          <Button
-            variant="contained"
-            onClick={handleAddComment}
-            disabled={!newCommentText.trim()}
-            sx={{
-              textTransform: "none",
-              bgcolor: "#2A276E",
-              "&:hover": {
-                bgcolor: "#1f1d57",
-              },
-            }}
-          >
-            Add
+            Close
           </Button>
         </DialogActions>
       </Dialog>

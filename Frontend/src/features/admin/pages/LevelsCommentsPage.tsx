@@ -1,471 +1,331 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   Alert,
   Box,
   Button,
   CircularProgress,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
-  IconButton,
-  Switch,
-  Tab,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  Tabs,
+  Divider,
+  Paper,
   TextField,
-  Tooltip,
   Typography,
 } from "@mui/material";
-import AddOutlinedIcon from "@mui/icons-material/AddOutlined";
-import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
-import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined";
-import { Controller, useForm } from "react-hook-form";
+import SaveOutlinedIcon from "@mui/icons-material/SaveOutlined";
 
-import {
-  createComment,
-  createLevel,
-  deleteComment,
-  deleteLevel,
-  getComments,
-  getLevels,
-  updateComment,
-  updateLevel,
-  type InspectionComment,
-  type InspectionLevel,
-} from "../systemApi";
 import { BRAND_NAVY } from "../components/adminUtils";
-import { ConfirmDialog, SnackBar, type Snack } from "../components/adminUi";
+import { SnackBar, type Snack } from "../components/adminUi";
+import {
+  useSetupConfig,
+  useUpdateSetupConfig,
+} from "@/shared/hooks/useSetupConfig";
+import type { SetupLevels, SetupComments } from "../systemApi";
 
-type LevelForm = { name: string; description: string; displayOrder: number };
-type CommentForm = { comment: string; description: string };
+const LEVEL_LABELS: Record<string, string> = {
+  default1: "Default 1",
+  default2: "Default 2",
+  custom1: "Custom 1",
+  custom2: "Custom 2",
+  custom3: "Custom 3",
+  custom4: "Custom 4",
+  custom5: "Custom 5",
+};
+
+const COMMENT_LABELS: Record<string, string> = {
+  default1: "Default 1",
+  custom1: "Custom 1",
+  custom2: "Custom 2",
+  custom3: "Custom 3",
+  custom4: "Custom 4",
+  custom5: "Custom 5",
+  custom6: "Custom 6",
+  custom7: "Custom 7",
+  custom8: "Custom 8",
+  custom9: "Custom 9",
+  custom10: "Custom 10",
+};
 
 export default function LevelsCommentsPage() {
-  const [tab, setTab] = useState(0);
-  const [levels, setLevels] = useState<InspectionLevel[]>([]);
-  const [comments, setComments] = useState<InspectionComment[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data: config, isLoading, isError, error } = useSetupConfig();
+  const updateConfig = useUpdateSetupConfig();
+
+  const [levelDraft, setLevelDraft] = useState<Partial<SetupLevels>>({});
+  const [commentDraft, setCommentDraft] = useState<Record<string, string>>({});
   const [snack, setSnack] = useState<Snack>(null);
 
-  const [levelDialog, setLevelDialog] = useState<{ open: boolean; editing: InspectionLevel | null }>({
-    open: false,
-    editing: null,
-  });
-  const [commentDialog, setCommentDialog] = useState<{ open: boolean; editing: InspectionComment | null }>({
-    open: false,
-    editing: null,
-  });
-  const [pendingDelete, setPendingDelete] = useState<{
-    kind: "level" | "comment";
-    item: InspectionLevel | InspectionComment;
-  } | null>(null);
+  const [prevConfig, setPrevConfig] = useState(config);
 
-  const levelForm = useForm<LevelForm>();
-  const commentForm = useForm<CommentForm>();
+  if (config !== prevConfig) {
+    setPrevConfig(config);
 
-  const load = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const [lv, cm] = await Promise.all([getLevels(), getComments()]);
-      setLevels(lv);
-      setComments(cm);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load settings.");
-    } finally {
-      setLoading(false);
+    if (config) {
+      setLevelDraft(
+        (Object.keys(LEVEL_LABELS) as Array<keyof SetupLevels>).reduce<
+          Partial<SetupLevels>
+        >((acc, key) => ({ ...acc, [key]: config.levels[key] ?? "" }), {})
+      );
+
+      setCommentDraft(
+        (Object.keys(COMMENT_LABELS) as Array<keyof SetupComments>).reduce<
+          Record<string, string>
+        >((acc, key) => ({ ...acc, [key]: config.comments[key] ?? "" }), {})
+      );
     }
-  };
+  }
 
-  useEffect(() => {
-    let isMounted = true;
-
-    const run = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const [lv, cm] = await Promise.all([getLevels(), getComments()]);
-        if (!isMounted) return;
-        setLevels(lv);
-        setComments(cm);
-      } catch (err) {
-        if (!isMounted) return;
-        setError(err instanceof Error ? err.message : "Failed to load settings.");
-      } finally {
-        if (isMounted) setLoading(false);
-      }
-    };
-
-    void run();
-
-    return () => {
-      isMounted = false;
-    };
-  }, []);
-
-  const openLevelDialog = (level: InspectionLevel | null) => {
-    levelForm.reset(
-      level
-        ? { name: level.name, description: level.description, displayOrder: level.displayOrder }
-        : { name: "", description: "", displayOrder: levels.length + 1 }
+  if (isLoading) {
+    return (
+      <Box sx={{ p: 8, textAlign: "center" }}>
+        <CircularProgress size={34} sx={{ color: BRAND_NAVY }} />
+        <Typography sx={{ mt: 2, fontWeight: 500 }}>
+          Loading configuration...
+        </Typography>
+      </Box>
     );
-    setLevelDialog({ open: true, editing: level });
-  };
+  }
 
-  const saveLevel = async (values: LevelForm) => {
-    try {
-      if (levelDialog.editing) {
-        await updateLevel(levelDialog.editing.id, values);
-        setSnack({ message: `Level "${values.name}" updated.`, severity: "success" });
-      } else {
-        await createLevel({ ...values, active: true });
-        setSnack({ message: `Level "${values.name}" created.`, severity: "success" });
-      }
-      setLevelDialog({ open: false, editing: null });
-      await load();
-    } catch (err) {
-      setSnack({ message: err instanceof Error ? err.message : "Failed to save level.", severity: "error" });
-    }
-  };
-
-  const openCommentDialog = (comment: InspectionComment | null) => {
-    commentForm.reset(
-      comment ? { comment: comment.comment, description: comment.description } : { comment: "", description: "" }
+  if (isError || !config) {
+    return (
+      <Box sx={{ p: 3 }}>
+        <Alert severity="error">
+          {(error as Error)?.message ?? "Failed to load configuration."}
+        </Alert>
+      </Box>
     );
-    setCommentDialog({ open: true, editing: comment });
-  };
+  }
 
-  const saveComment = async (values: CommentForm) => {
-    try {
-      if (commentDialog.editing) {
-        await updateComment(commentDialog.editing.id, values);
-        setSnack({ message: `Comment "${values.comment}" updated.`, severity: "success" });
-      } else {
-        await createComment({ ...values, active: true });
-        setSnack({ message: `Comment "${values.comment}" created.`, severity: "success" });
+  const handleUpdate = () => {
+    setSnack(null);
+
+    updateConfig.mutate(
+      {
+        levels: {
+          default1: config.levels.default1,
+          default2: config.levels.default2,
+          custom1: levelDraft.custom1 ?? config.levels.custom1,
+          custom2: levelDraft.custom2 ?? config.levels.custom2,
+          custom3: levelDraft.custom3 ?? config.levels.custom3,
+          custom4: levelDraft.custom4 ?? config.levels.custom4,
+          custom5: levelDraft.custom5 ?? config.levels.custom5,
+        },
+        comments: {
+          default1: config.comments.default1,
+          custom1: commentDraft.custom1 ?? config.comments.custom1,
+          custom2: commentDraft.custom2 ?? config.comments.custom2,
+          custom3: commentDraft.custom3 ?? config.comments.custom3,
+          custom4: commentDraft.custom4 ?? config.comments.custom4,
+          custom5: commentDraft.custom5 ?? config.comments.custom5,
+          custom6: commentDraft.custom6 ?? config.comments.custom6,
+          custom7: commentDraft.custom7 ?? config.comments.custom7,
+          custom8: commentDraft.custom8 ?? config.comments.custom8,
+          custom9: commentDraft.custom9 ?? config.comments.custom9,
+          custom10: commentDraft.custom10 ?? config.comments.custom10,
+        },
+      },
+      {
+        onSuccess: () =>
+          setSnack({
+            message: "Setup Levels and Comments saved successfully.",
+            severity: "success",
+          }),
+        onError: (err) =>
+          setSnack({
+            message:
+              err instanceof Error
+                ? err.message
+                : "Failed to save configuration.",
+            severity: "error",
+          }),
       }
-      setCommentDialog({ open: false, editing: null });
-      await load();
-    } catch (err) {
-      setSnack({ message: err instanceof Error ? err.message : "Failed to save comment.", severity: "error" });
-    }
+    );
   };
 
-  const toggleLevel = async (level: InspectionLevel) => {
-    try {
-      await updateLevel(level.id, { active: !level.active });
-      await load();
-    } catch (err) {
-      setSnack({ message: err instanceof Error ? err.message : "Failed to update level.", severity: "error" });
-    }
-  };
-
-  const toggleComment = async (comment: InspectionComment) => {
-    try {
-      await updateComment(comment.id, { active: !comment.active });
-      await load();
-    } catch (err) {
-      setSnack({ message: err instanceof Error ? err.message : "Failed to update comment.", severity: "error" });
-    }
-  };
-
-  const confirmDelete = async () => {
-    if (!pendingDelete) return;
-
-    try {
-      if (pendingDelete.kind === "level") {
-        const levelItem = pendingDelete.item as InspectionLevel;
-        await deleteLevel(levelItem.id);
-        setSnack({ message: `Level "${levelItem.name}" deleted.`, severity: "success" });
-      } else {
-        const commentItem = pendingDelete.item as InspectionComment;
-        await deleteComment(commentItem.id);
-        setSnack({
-          message: `Comment "${commentItem.comment}" deleted.`,
-          severity: "success",
-        });
-      }
-      setPendingDelete(null);
-      await load();
-    } catch (err) {
-      setSnack({ message: err instanceof Error ? err.message : "Failed to delete.", severity: "error" });
-    }
+  const textFieldStyle = {
+    "& .MuiOutlinedInput-root": {
+      borderRadius: 2,
+      transition: "all .25s ease",
+      backgroundColor: "#fff",
+      "&:hover": {
+        transform: "translateY(-2px)",
+        boxShadow: "0 4px 14px rgba(42,39,110,.12)",
+      },
+      "&.Mui-focused": {
+        boxShadow: "0 0 0 4px rgba(42,39,110,.15)",
+      },
+    },
   };
 
   return (
-    <Box sx={{ p: { xs: 2, md: 3 } }}>
-      <Typography variant="h4" sx={{ fontWeight: 700, color: BRAND_NAVY, mb: 2 }}>
-        Setup Levels and Comments
-      </Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Severity levels and comments are available to reviewers when inspecting differences and appear in the generated PDF report.
-      </Typography>
-
-      {error && (
-        <Alert severity="error" sx={{ mb: 2 }}>
-          {error}
-        </Alert>
-      )}
-
-      <Box
+    <Box
+      sx={{
+        minHeight: "100vh",
+        px: { xs: 2, md: 4 },
+        py: 4,
+      }}
+    >
+      <Typography
+        variant="h4"
         sx={{
-          borderBottom: 1,
-          borderColor: "divider",
-          mb: 2,
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
+          fontWeight: 700,
+          color: BRAND_NAVY,
+          textAlign: "center",
+          mb: 4,
+          letterSpacing: ".3px",
         }}
       >
-        <Tabs value={tab} onChange={(_, value: number) => setTab(value)}>
-          <Tab label="Levels" />
-          <Tab label="Comments" />
-        </Tabs>
-        <Button
-          variant="contained"
-          startIcon={<AddOutlinedIcon />}
-          onClick={() => (tab === 0 ? openLevelDialog(null) : openCommentDialog(null))}
-          sx={{ bgcolor: BRAND_NAVY, "&:hover": { bgcolor: "#1E1B54" }, mb: 0.5 }}
+        Setup Levels & Comments
+      </Typography>
+
+      <Paper
+        elevation={0}
+        sx={{
+          maxWidth: 1100,
+          mx: "auto",
+          p: { xs: 3, md: 4 },
+          borderRadius: 4,
+          background: "rgba(255,255,255,.92)",
+          backdropFilter: "blur(10px)",
+          border: "1px solid rgba(42,39,110,.08)",
+          boxShadow: "0 12px 35px rgba(42,39,110,.12)",
+        }}
+      >
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" },
+            gap: 5,
+          }}
         >
-          {tab === 0 ? "Add Level" : "Add Comment"}
-        </Button>
-      </Box>
+          {/* LEVELS */}
+          <Box>
+            <Box sx={{ display: "flex", alignItems: "center", mb: 3 }}>
+              <Box
+                sx={{
+                  width: 5,
+                  height: 28,
+                  bgcolor: BRAND_NAVY,
+                  borderRadius: 2,
+                  mr: 1.5,
+                }}
+              />
+              <Typography variant="h6" sx={{ fontWeight: 700, color: BRAND_NAVY }}>
+                Levels
+              </Typography>
+            </Box>
 
-      {loading ? (
-        <Box sx={{ display: "flex", justifyContent: "center", py: 6 }}>
-          <CircularProgress size={28} />
+            <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              {(Object.keys(LEVEL_LABELS) as Array<keyof SetupLevels>).map(
+                (key) => (
+                  <TextField
+                    key={key}
+                    fullWidth
+                    size="small"
+                    label={LEVEL_LABELS[key]}
+                    value={levelDraft[key] ?? config.levels[key] ?? ""}
+                    disabled={key === "default1" || key === "default2"}
+                    onChange={(e) =>
+                      setLevelDraft((prev) => ({
+                        ...prev,
+                        [key]: e.target.value,
+                      }))
+                    }
+                    sx={textFieldStyle}
+                  />
+                )
+              )}
+            </Box>
+
+            <Typography
+              variant="caption"
+              sx={{ mt: 2, display: "block", color: "text.secondary" }}
+            >
+              Default levels are read-only.
+            </Typography>
+          </Box>
+
+          {/* COMMENTS */}
+          <Box>
+            <Box sx={{ display: "flex", alignItems: "center", mb: 3 }}>
+              <Box
+                sx={{
+                  width: 5,
+                  height: 28,
+                  bgcolor: BRAND_NAVY,
+                  borderRadius: 2,
+                  mr: 1.5,
+                }}
+              />
+              <Typography variant="h6" sx={{ fontWeight: 700, color: BRAND_NAVY }}>
+                Comments
+              </Typography>
+            </Box>
+
+            <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              {(Object.keys(COMMENT_LABELS) as Array<keyof SetupComments>).map(
+                (key) => (
+                  <TextField
+                    key={key}
+                    fullWidth
+                    size="small"
+                    label={COMMENT_LABELS[key]}
+                    value={commentDraft[key] ?? config.comments[key] ?? ""}
+                    disabled={key === "default1"}
+                    onChange={(e) =>
+                      setCommentDraft((prev) => ({
+                        ...prev,
+                        [key]: e.target.value,
+                      }))
+                    }
+                    sx={textFieldStyle}
+                  />
+                )
+              )}
+            </Box>
+
+            <Typography
+              variant="caption"
+              sx={{ mt: 2, display: "block", color: "text.secondary" }}
+            >
+              Default comment is read-only.
+            </Typography>
+          </Box>
         </Box>
-      ) : tab === 0 ? (
-        <TableContainer sx={{ border: "1px solid #E0E0E6", borderRadius: 2, bgcolor: "#fff" }}>
-          <Table size="small">
-            <TableHead>
-              <TableRow sx={{ bgcolor: "#F5F6FA" }}>
-                {["Display Order", "Name", "Description", "Active", "Actions"].map((header) => (
-                  <TableCell key={header} sx={{ fontWeight: 700, color: BRAND_NAVY }}>
-                    {header}
-                  </TableCell>
-                ))}
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {levels.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={5} align="center" sx={{ py: 5 }}>
-                    <Typography color="text.secondary">No levels defined yet.</Typography>
-                  </TableCell>
-                </TableRow>
+
+        <Divider sx={{ my: 4 }} />
+
+        <Box sx={{ display: "flex", justifyContent: "center" }}>
+          <Button
+            variant="contained"
+            size="large"
+            startIcon={
+              updateConfig.isPending ? (
+                <CircularProgress size={20} color="inherit" />
               ) : (
-                levels.map((level) => (
-                  <TableRow key={level.id} hover>
-                    <TableCell>{level.displayOrder}</TableCell>
-                    <TableCell sx={{ fontWeight: 600 }}>{level.name}</TableCell>
-                    <TableCell>{level.description}</TableCell>
-                    <TableCell>
-                      <Switch checked={level.active} onChange={() => toggleLevel(level)} size="small" />
-                    </TableCell>
-                    <TableCell sx={{ whiteSpace: "nowrap" }}>
-                      <Tooltip title="Edit">
-                        <IconButton size="small" onClick={() => openLevelDialog(level)}>
-                          <EditOutlinedIcon fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title="Delete">
-                        <IconButton
-                          size="small"
-                          color="error"
-                          onClick={() => setPendingDelete({ kind: "level", item: level })}
-                        >
-                          <DeleteOutlineOutlinedIcon fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </TableContainer>
-      ) : (
-        <TableContainer sx={{ border: "1px solid #E0E0E6", borderRadius: 2, bgcolor: "#fff" }}>
-          <Table size="small">
-            <TableHead>
-              <TableRow sx={{ bgcolor: "#F5F6FA" }}>
-                {["Comment", "Description", "Active", "Actions"].map((header) => (
-                  <TableCell key={header} sx={{ fontWeight: 700, color: BRAND_NAVY }}>
-                    {header}
-                  </TableCell>
-                ))}
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {comments.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={4} align="center" sx={{ py: 5 }}>
-                    <Typography color="text.secondary">No comments defined yet.</Typography>
-                  </TableCell>
-                </TableRow>
-              ) : (
-                comments.map((comment) => (
-                  <TableRow key={comment.id} hover>
-                    <TableCell sx={{ fontWeight: 600 }}>{comment.comment}</TableCell>
-                    <TableCell>{comment.description}</TableCell>
-                    <TableCell>
-                      <Switch checked={comment.active} onChange={() => toggleComment(comment)} size="small" />
-                    </TableCell>
-                    <TableCell sx={{ whiteSpace: "nowrap" }}>
-                      <Tooltip title="Edit">
-                        <IconButton size="small" onClick={() => openCommentDialog(comment)}>
-                          <EditOutlinedIcon fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title="Delete">
-                        <IconButton
-                          size="small"
-                          color="error"
-                          onClick={() => setPendingDelete({ kind: "comment", item: comment })}
-                        >
-                          <DeleteOutlineOutlinedIcon fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </TableContainer>
-      )}
-
-      <Dialog
-        open={levelDialog.open}
-        onClose={() => setLevelDialog({ open: false, editing: null })}
-        maxWidth="xs"
-        fullWidth
-      >
-        <DialogTitle sx={{ fontWeight: 700, color: BRAND_NAVY }}>
-          {levelDialog.editing ? "Edit Level" : "Add Level"}
-        </DialogTitle>
-        <DialogContent dividers>
-          <Box sx={{ display: "grid", gap: 2, pt: 0.5 }}>
-            <Controller
-              name="name"
-              control={levelForm.control}
-              rules={{ required: "Name is required." }}
-              render={({ field }) => (
-                <TextField
-                  {...field}
-                  label="Name *"
-                  size="small"
-                  error={Boolean(levelForm.formState.errors.name)}
-                  helperText={levelForm.formState.errors.name?.message ?? " "}
-                />
-              )}
-            />
-            <Controller
-              name="description"
-              control={levelForm.control}
-              render={({ field }) => (
-                <TextField {...field} label="Description" size="small" multiline minRows={2} />
-              )}
-            />
-            <Controller
-              name="displayOrder"
-              control={levelForm.control}
-              rules={{
-                required: "Display order is required.",
-                min: { value: 1, message: "Must be at least 1." },
-              }}
-              render={({ field }) => (
-                <TextField
-                  {...field}
-                  type="number"
-                  label="Display Order *"
-                  size="small"
-                  error={Boolean(levelForm.formState.errors.displayOrder)}
-                  helperText={levelForm.formState.errors.displayOrder?.message ?? " "}
-                />
-              )}
-            />
-          </Box>
-        </DialogContent>
-        <DialogActions sx={{ px: 3, py: 2 }}>
-          <Button onClick={() => setLevelDialog({ open: false, editing: null })} color="inherit">
-            Cancel
+                <SaveOutlinedIcon />
+              )
+            }
+            disabled={updateConfig.isPending}
+            onClick={handleUpdate}
+            sx={{
+              px: 5,
+              py: 1.4,
+              borderRadius: 3,
+              fontWeight: 700,
+              letterSpacing: ".3px",
+              background: "linear-gradient(135deg, #2A276E, #3D3A8C)",
+              boxShadow: "0 8px 24px rgba(42,39,110,.35)",
+              transition: "all .25s ease",
+              "&:hover": {
+                transform: "translateY(-2px)",
+                boxShadow: "0 12px 30px rgba(42,39,110,.45)",
+                background: "linear-gradient(135deg, #242162, #2A276E)",
+              },
+            }}
+          >
+            {updateConfig.isPending ? "Saving..." : "Save Changes"}
           </Button>
-          <Button onClick={levelForm.handleSubmit(saveLevel)} variant="contained" sx={{ bgcolor: BRAND_NAVY }}>
-            Save
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      <Dialog
-        open={commentDialog.open}
-        onClose={() => setCommentDialog({ open: false, editing: null })}
-        maxWidth="xs"
-        fullWidth
-      >
-        <DialogTitle sx={{ fontWeight: 700, color: BRAND_NAVY }}>
-          {commentDialog.editing ? "Edit Comment" : "Add Comment"}
-        </DialogTitle>
-        <DialogContent dividers>
-          <Box sx={{ display: "grid", gap: 2, pt: 0.5 }}>
-            <Controller
-              name="comment"
-              control={commentForm.control}
-              rules={{ required: "Comment is required." }}
-              render={({ field }) => (
-                <TextField
-                  {...field}
-                  label="Comment *"
-                  size="small"
-                  error={Boolean(commentForm.formState.errors.comment)}
-                  helperText={commentForm.formState.errors.comment?.message ?? " "}
-                />
-              )}
-            />
-            <Controller
-              name="description"
-              control={commentForm.control}
-              render={({ field }) => (
-                <TextField {...field} label="Description" size="small" multiline minRows={2} />
-              )}
-            />
-          </Box>
-        </DialogContent>
-        <DialogActions sx={{ px: 3, py: 2 }}>
-          <Button onClick={() => setCommentDialog({ open: false, editing: null })} color="inherit">
-            Cancel
-          </Button>
-          <Button onClick={commentForm.handleSubmit(saveComment)} variant="contained" sx={{ bgcolor: BRAND_NAVY }}>
-            Save
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      <ConfirmDialog
-        open={Boolean(pendingDelete)}
-        title="Please Confirm"
-        message={
-          pendingDelete
-            ? pendingDelete.kind === "level"
-              ? `Delete "${(pendingDelete.item as InspectionLevel).name}"? This action cannot be undone.`
-              : `Delete "${(pendingDelete.item as InspectionComment).comment}"? This action cannot be undone.`
-            : ""
-        }
-        confirmLabel="Delete"
-        confirmColor="error"
-        onClose={() => setPendingDelete(null)}
-        onConfirm={confirmDelete}
-      />
+        </Box>
+      </Paper>
 
       <SnackBar snack={snack} onClose={() => setSnack(null)} />
     </Box>
   );
 }
-

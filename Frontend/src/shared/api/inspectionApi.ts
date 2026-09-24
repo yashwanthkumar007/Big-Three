@@ -31,6 +31,13 @@ export type InspectionApiOptions = {
   inspectionType?: InspectionType;
   /** Difference Filter payload forwarded to the backend `/api/inspect` call. */
   differenceFilters?: Record<string, boolean>;
+  /**
+   * Persistent inspection id (created via `createInspection`). When provided,
+   * it is used as the engine session id, the file re-upload is skipped (the
+   * files were already persisted server-side), and the run is tracked in
+   * Cosmos DB (submitted → processing → completed/failed).
+   */
+  inspectionId?: string;
 };
 
 /* -------------------------------------------------------------------------- */
@@ -89,6 +96,123 @@ export type InspectionRunResult = {
 const generateSessionId = (inspectionType?: string) =>
   generateInspectionSessionId(inspectionType ?? "text");
 
+
+/* -------------------------------------------------------------------------- */
+/*                   Persistent Inspections (Cosmos DB + Blob)                */
+/* -------------------------------------------------------------------------- */
+
+export type InspectionFileMeta = {
+  fileId: string;
+  fileName: string;
+  fileType: string;
+  blobPath: string;
+  size: number;
+};
+
+export type InspectionMeta = {
+  inspectionId: string;
+  userId: string;
+  accountType: string;
+  inspectionType: string;
+  status: "uploaded" | "submitted" | "processing" | "completed" | "failed" | "cancelled";
+  masterFile: InspectionFileMeta | null;
+  sampleFile: InspectionFileMeta | null;
+  createdAt: string | null;
+  uploadedAt: string | null;
+  submittedAt: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  failedReason?: string | null;
+  resultId: string | null;
+  result?: { resultId: string; report: InspectionReport };
+};
+
+/**
+ * Identity header for the current authenticated user. The email is used ONLY
+ * as a login identifier — the backend resolves the real identity/accountType
+ * from its own database and enforces ownership server-side.
+ */
+const identityHeaders = (): Record<string, string> => {
+  try {
+    const raw = localStorage.getItem("user");
+    const email = raw ? (JSON.parse(raw)?.email as string | undefined) : undefined;
+    return email ? { "X-User-Email": email } : {};
+  } catch {
+    return {};
+  }
+};
+
+/**
+ * Creates a persistent inspection: uploads both files to the backend
+ * (Azure Blob Storage) and registers the inspection in Cosmos DB.
+ * Returns the server-issued inspection metadata.
+ */
+export async function createInspection(
+  masterFile: File,
+  sampleFile: File,
+  inspectionType: string
+): Promise<InspectionMeta> {
+  const formData = new FormData();
+  formData.append("master", masterFile);
+  formData.append("sample", sampleFile);
+  formData.append("inspectionType", inspectionType);
+
+  const response = await axios.post(
+    `${API_BASE_URL}/api/inspections`,
+    formData,
+    { headers: { "Content-Type": "multipart/form-data", ...identityHeaders() } }
+  );
+  return response.data as InspectionMeta;
+}
+
+/** Lists ONLY the current user's inspections (newest first). */
+export async function fetchMyInspections(limit?: number): Promise<InspectionMeta[]> {
+  const response = await axios.get(`${API_BASE_URL}/api/inspections`, {
+    headers: identityHeaders(),
+    params: limit ? { limit } : undefined,
+  });
+  return response.data as InspectionMeta[];
+}
+
+/** Fetches a single inspection — owner-verified on the backend. */
+export async function fetchInspection(inspectionId: string): Promise<InspectionMeta> {
+  const response = await axios.get(
+    `${API_BASE_URL}/api/inspections/${encodeURIComponent(inspectionId)}`,
+    { headers: identityHeaders() }
+  );
+  return response.data as InspectionMeta;
+}
+
+/**
+ * Fetches the actual master/sample file bytes for a persisted inspection
+ * (owner-verified on the backend) and reconstructs a real File object so the
+ * existing PDF viewer / InspectionResults component can render it.
+ *
+ * Returns null if the fetch fails (e.g. not found, unauthorized, unavailable).
+ */
+export async function fetchInspectionFile(
+  inspectionId: string,
+  side: "master" | "sample",
+  fileName: string
+): Promise<File | null> {
+  try {
+    const response = await axios.get(
+      `${API_BASE_URL}/api/inspections/${encodeURIComponent(inspectionId)}/file`,
+      {
+        headers: identityHeaders(),
+        params: { side },
+        responseType: "blob",
+      }
+    );
+    const blob = response.data as Blob;
+        const type = String(response.headers["content-type"] ?? "application/pdf");
+    return new File([blob], fileName, { type });
+  } catch {
+    return null;
+  }
+}
+
+/* -------------------------------------------------------------------------- */
 
 export type ShareInspectionReportParams = {
   recipientEmail: string;
@@ -198,7 +322,7 @@ export async function startInspection(
     `${label} failed`;
 
   const sessionId =
-    options.sessionId ?? generateSessionId(inspectionType);
+    options.inspectionId ?? options.sessionId ?? generateSessionId(inspectionType);
 
   const setStatus = (status: string, progress?: number) => {
     options.onStatus?.({ status, progress });
@@ -207,20 +331,30 @@ export async function startInspection(
   setStatus(`Uploading files...`, 10);
 
   try {
-    await uploadFile(masterFile, sessionId, "master");
-    setStatus(`Loading ${label} — Master...`, 40);
+    if (options.inspectionId) {
+      // Persistent run: the files were already uploaded to Azure Blob
+      // Storage and local engine copies written by POST /api/inspections,
+      // so skip the transient upload calls.
+      setStatus(`Loading ${label} files...`, 40);
+    } else {
+      await uploadFile(masterFile, sessionId, "master");
+      setStatus(`Loading ${label} — Master...`, 40);
 
-    await uploadFile(sampleFile, sessionId, "sample");
-    setStatus(`Loading ${label} — Sample...`, 65);
-
+      await uploadFile(sampleFile, sessionId, "sample");
+    }
     setStatus(`Comparing ${label.toLowerCase()}...`, 80);
 
     const response = await axios.post(`${API_BASE_URL}/api/inspect`, {
       session_id: sessionId,
       inspection_type: inspectionType,
+      ...(options.inspectionId ? { inspection_id: options.inspectionId } : {}),
       ...(options.differenceFilters
         ? { filters: options.differenceFilters }
         : {}),
+    }, {
+      // /api/inspect may associate the run with a persisted inspection,
+      // which requires the authenticated identity header.
+      headers: identityHeaders(),
     });
 
     setStatus("Preparing results...", 100);
@@ -242,6 +376,77 @@ export async function startInspection(
     throw new Error(message, { cause: error });
   }
 }
+
+/* -------------------------------------------------------------------------- */
+/* Backward-compatibility re-exports                                          */
+/* -------------------------------------------------------------------------- */
+/*
+/* -------------------------------------------------------------------------- */
+/*                        Crop Compare (region-scoped run)                    */
+/* -------------------------------------------------------------------------- */
+
+export type CropFinding = {
+  id: number;
+  type: string;
+  master: string;
+  sample: string;
+  comment: string;
+  page: number;
+  master_box: BoundingBox | null;
+  sample_box: BoundingBox | null;
+  source: string;
+};
+
+export type CropRunResult = {
+  findings: CropFinding[];
+  match_stats: {
+    matched_pairs: number;
+    unmatched_master: number;
+    unmatched_sample: number;
+  };
+  region: { page: number; box_px: BoundingBox };
+  log_file?: string | null;
+};
+
+export type CropInspectOptions = {
+  /**
+   * Engine session id (fresh run). For a persisted inspection, pass
+   * `inspectionId` instead — the backend owner-verifies it and downloads
+   * the master/sample files from Blob Storage if the local engine copy
+   * is missing, so Crop Compare works on reopened results too.
+   */
+  sessionId?: string;
+  inspectionId?: string;
+  /** 0-based page number the crop was drawn on. */
+  page: number;
+  /** Crop box in DPI-150 pixel space (same space as finding boxes). */
+  box: BoundingBox;
+};
+
+/**
+ * Runs the crop-scoped Text Inspection on a region of a single page and
+ * returns findings in the same pixel-space shape as the full run.
+ */
+export async function cropInspect(
+  options: CropInspectOptions
+): Promise<CropRunResult> {
+  const response = await axios.post(
+    `${API_BASE_URL}/api/crop_inspect`,
+    {
+      ...(options.sessionId ? { session_id: options.sessionId } : {}),
+      ...(options.inspectionId ? { inspection_id: options.inspectionId } : {}),
+      page: options.page,
+      box: options.box,
+    },
+    {
+      // Persisted-inspection resolution requires the authenticated
+      // identity header (same requirement as /api/inspect).
+      headers: identityHeaders(),
+    }
+  );
+  return response.data as CropRunResult;
+}
+
 
 /* -------------------------------------------------------------------------- */
 /* Backward-compatibility re-exports                                          */

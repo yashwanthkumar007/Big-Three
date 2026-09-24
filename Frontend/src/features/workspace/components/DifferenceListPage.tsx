@@ -14,6 +14,7 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TextField,
   Typography,
 } from "@mui/material";
 
@@ -23,16 +24,16 @@ import {
   type DifferenceListSyncMessage,
 } from "@/store/uploadStore";
 import type { InspectionDifference } from "./InspectionResults";
-
-const COMMENT_OPTIONS = [
-  "Reviewed",
-  "Approved",
-  "To be verified",
-  "None",
-  "Comment1",
-  "Comment2",
-  "Comment3",
-];
+import { useSetupConfig } from "@/shared/hooks/useSetupConfig";
+import {
+  configuredLevelOptions,
+  configuredCommentOptions,
+  isEditableCommentPlaceholder,
+} from "@/shared/utils/setupLevels";
+import {
+  logAuditEvent,
+  updateInspectionDifferenceComment,
+} from "@/features/admin/systemApi";
 
 export default function DifferenceListPage() {
   /* ------------------------------------------------------------------ */
@@ -52,6 +53,31 @@ export default function DifferenceListPage() {
   const customComments = useUploadStore((state) => state.customComments);
 
   const [selectedId, setSelectedId] = useState<number | null>(null);
+
+  // Toggle: clicking the already-selected difference deselects it.
+  const toggleSelect = (differenceId: number) => {
+    setSelectedId((prev) => (prev === differenceId ? null : differenceId));
+  };
+
+  /* ------------------------------------------------------------------ */
+  /* Admin-configured levels and comments (Setup Levels & Comments)      */
+  /* ------------------------------------------------------------------ */
+
+  const { data: setupConfig } = useSetupConfig();
+
+  const configuredLevels = useMemo(() => {
+    const options = configuredLevelOptions(setupConfig ?? null).filter(
+      (value) => value && value.trim() !== ""
+    );
+    return [...new Set(options)];
+  }, [setupConfig]);
+
+  const configuredComments = useMemo(() => {
+    const options = configuredCommentOptions(setupConfig ?? null);
+    const defaultComment = setupConfig?.comments.default1?.trim();
+    const all = defaultComment ? [defaultComment, ...options] : options;
+    return [...new Set(all)];
+  }, [setupConfig]);
 
   /* ------------------------------------------------------------------ */
   /* Build differences from the shared inspection report                */
@@ -116,6 +142,17 @@ export default function DifferenceListPage() {
       ...levelSelections,
       [differenceId]: value,
     });
+
+    // Audit: record level assignment on a difference (best-effort).
+    void logAuditEvent({
+      event: "DIFFERENCE_LEVEL_CHANGED",
+      action: "Update Level",
+      module: "Text Inspection",
+      description: `Level updated for difference ${differenceId} to "${value}".`,
+      inspectionId: sessionId ?? undefined,
+      differenceId,
+      metadata: { level: value },
+    });
   };
 
   const handleCommentChange = (differenceId: number, value: string) => {
@@ -127,6 +164,65 @@ export default function DifferenceListPage() {
       ...commentSelections,
       [differenceId]: value,
     });
+
+    // Audit: record comment/status selection on a difference (best-effort).
+    void logAuditEvent({
+      event: "DIFFERENCE_COMMENT_UPDATED",
+      action: "Update Difference Comment",
+      module: "Text Inspection",
+      description: `Comment updated for difference ${differenceId} to "${value}".`,
+      inspectionId: sessionId ?? undefined,
+      differenceId,
+      metadata: { comment: value },
+    });
+  };
+
+  /**
+   * Double-click on a "Comment1" / "Comment 2" … placeholder lets the user
+   * type their own comment. The typed text replaces the placeholder in the
+   * shared store (so it shows in the main Results page and the PDF report)
+   * and is persisted in Cosmos DB so it survives across sessions.
+   */
+  const [editingCommentId, setEditingCommentId] = useState<number | null>(null);
+  const [editingCommentText, setEditingCommentText] = useState("");
+  const [editingPlaceholder, setEditingPlaceholder] = useState("");
+
+  const handleStartEdit = (difference: InspectionDifference) => {
+    const currentValue = getCommentValue(difference.id);
+    if (isEditableCommentPlaceholder(currentValue)) {
+      setEditingCommentId(difference.id);
+      setEditingCommentText("");
+      setEditingPlaceholder(currentValue);
+    }
+  };
+
+  const handleSaveEdit = (differenceId: number) => {
+    const trimmed = editingCommentText.trim();
+    if (trimmed) {
+      setCommentSelections({
+        ...commentSelections,
+        [differenceId]: trimmed,
+      });
+
+      if (sessionId) {
+        void updateInspectionDifferenceComment(
+          sessionId,
+          differenceId,
+          {
+            configuredComment: editingPlaceholder,
+            userComment: trimmed,
+          }
+        ).catch((error) => {
+          console.warn(
+            "[DIFFERENCE LIST] Failed to persist user comment:",
+            error
+          );
+        });
+      }
+    }
+    setEditingCommentId(null);
+    setEditingCommentText("");
+    setEditingPlaceholder("");
   };
 
   /* ------------------------------------------------------------------ */
@@ -343,13 +439,11 @@ export default function DifferenceListPage() {
                     key={difference.id}
                     hover
                     selected={isSelected}
-                    onClick={() => {
-                      setSelectedId(difference.id);
-                      console.log(
-                        "[DIFFERENCE LIST] Selected difference:",
-                        difference.id
-                      );
-                    }}
+                    // NOTE: navigation is intentionally NOT on the row. Only
+                    // the ID / Master / Sample cells jump to the difference in
+                    // the PDF viewers — clicking inside the Level or Comment
+                    // cells (to pick a level/comment) must never redirect the
+                    // viewers (user-experience bug fix).
                     sx={{
                       cursor: "pointer",
                       bgcolor: isSelected
@@ -367,24 +461,29 @@ export default function DifferenceListPage() {
                     </TableCell>
 
                     <TableCell
+                      onClick={() => toggleSelect(difference.id)}
                       sx={{
                         fontSize: 14,
                         color: "#535a62",
+                        cursor: "pointer",
                       }}
                     >
                       {difference.id}
                     </TableCell>
 
                     <TableCell
+                      onClick={() => toggleSelect(difference.id)}
                       sx={{
                         fontSize: 14,
                         color: "#535a62",
+                        cursor: "pointer",
                       }}
                     >
                       {difference.type}
                     </TableCell>
 
                     <TableCell
+                      onClick={() => toggleSelect(difference.id)}
                       sx={{
                         fontSize: 14,
                         color: "#535a62",
@@ -392,6 +491,7 @@ export default function DifferenceListPage() {
                         overflow: "hidden",
                         textOverflow: "ellipsis",
                         whiteSpace: "nowrap",
+                        cursor: "pointer",
                       }}
                       title={difference.master}
                     >
@@ -399,6 +499,7 @@ export default function DifferenceListPage() {
                     </TableCell>
 
                     <TableCell
+                      onClick={() => toggleSelect(difference.id)}
                       sx={{
                         fontSize: 14,
                         color: "#535a62",
@@ -406,6 +507,7 @@ export default function DifferenceListPage() {
                         overflow: "hidden",
                         textOverflow: "ellipsis",
                         whiteSpace: "nowrap",
+                        cursor: "pointer",
                       }}
                       title={difference.sample}
                     >
@@ -432,15 +534,48 @@ export default function DifferenceListPage() {
                           }}
                         >
                           <MenuItem value="">None</MenuItem>
-                          <MenuItem value="Low">Low</MenuItem>
-                          <MenuItem value="Medium">Medium</MenuItem>
-                          <MenuItem value="High">High</MenuItem>
-                          <MenuItem value="Critical">Critical</MenuItem>
+                          {configuredLevels
+                            .filter((option) => option !== "None")
+                            .map((option) => (
+                              <MenuItem key={option} value={option}>
+                                {option}
+                              </MenuItem>
+                            ))}
                         </Select>
                       </FormControl>
                     </TableCell>
 
                     <TableCell>
+                      {editingCommentId === difference.id ? (
+                        <TextField
+                          size="small"
+                          fullWidth
+                          autoFocus
+                          value={editingCommentText}
+                          onChange={(event) =>
+                            setEditingCommentText(event.target.value)
+                          }
+                          onBlur={() => handleSaveEdit(difference.id)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              handleSaveEdit(difference.id);
+                            } else if (event.key === "Escape") {
+                              setEditingCommentId(null);
+                              setEditingCommentText("");
+                            }
+                          }}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                          }}
+                          sx={{
+                            "& .MuiInputBase-root": {
+                              height: 30,
+                              fontSize: 13,
+                            },
+                          }}
+                        />
+                      ) : (
                       <FormControl size="small" fullWidth>
                         <Select
                           value={getCommentValue(difference.id)}
@@ -452,6 +587,10 @@ export default function DifferenceListPage() {
                           onClick={(event) => {
                             event.stopPropagation();
                           }}
+                          onDoubleClick={(event) => {
+                            event.stopPropagation();
+                            handleStartEdit(difference);
+                          }}
                           onChange={(event) => {
                             handleCommentChange(
                               difference.id,
@@ -459,11 +598,31 @@ export default function DifferenceListPage() {
                             );
                           }}
                         >
-                          {COMMENT_OPTIONS.map((option) => (
+                          {configuredComments.map((option) => (
                             <MenuItem key={option} value={option}>
                               {option}
                             </MenuItem>
                           ))}
+
+                          {/* Persisted user comment (e.g. typed via
+                              double-click) that is not one of the configured
+                              options — render it so the Select value is
+                              always valid. */}
+                          {(() => {
+                            const current = getCommentValue(difference.id);
+                            if (
+                              current === "" ||
+                              current === "None" ||
+                              configuredComments.includes(current)
+                            ) {
+                              return null;
+                            }
+                            return (
+                              <MenuItem key={current} value={current}>
+                                {current}
+                              </MenuItem>
+                            );
+                          })()}
 
                           {customComments.length > 0 && (
                             <Divider sx={{ my: 0.5 }} />
@@ -479,6 +638,7 @@ export default function DifferenceListPage() {
                           ))}
                         </Select>
                       </FormControl>
+                      )}
                     </TableCell>
                   </TableRow>
                 );

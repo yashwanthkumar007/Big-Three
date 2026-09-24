@@ -1,6 +1,6 @@
 """
 PDF text extraction — block-level text plus per-span formatting metadata
-(font, size, color, bold/italic, rotation).
+(font, size, color, bold/italic, rotation, underline).
 
 Upgrade over the original text_extractor.py: the old version only kept
 min/max font size per block, which is enough for Change/Deletion/
@@ -65,6 +65,236 @@ def _color_int_to_rgb(color_int: int) -> tuple:
     g = (color_int >> 8) & 255
     b = color_int & 255
     return (r, g, b)
+
+
+def _expand_bbox(bbox, margin=1.5):
+    """
+    Expand a bounding box slightly.
+    """
+    if not bbox or len(bbox) != 4:
+        return None
+    x0, y0, x1, y1 = bbox
+    return (
+        float(x0) - margin,
+        float(y0) - margin,
+        float(x1) + margin,
+        float(y1) + margin,
+    )
+
+
+def _drawing_is_line_like(drawing) -> bool:
+    """
+    Determine whether a PyMuPDF drawing looks like a line or
+    very thin rectangle.
+
+    These are the common drawing representations of PDF underlines.
+    """
+    bbox = drawing.get("rect")
+    if bbox is None:
+        bbox = drawing.get("bbox")
+    if bbox is None:
+        return False
+
+    try:
+        x0 = float(bbox.x0)
+        y0 = float(bbox.y0)
+        x1 = float(bbox.x1)
+        y1 = float(bbox.y1)
+    except Exception:
+        try:
+            x0, y0, x1, y1 = bbox
+        except Exception:
+            return False
+
+    width = abs(x1 - x0)
+    height = abs(y1 - y0)
+
+    # Horizontal line.
+    if width >= 2.0 and height <= 3.0:
+        return True
+
+    # Very thin rectangle.
+    if width >= 2.0 and height <= 4.0:
+        return True
+
+    return False
+
+
+def _drawing_bbox(drawing):
+    """
+    Safely obtain a drawing's bbox.
+    """
+    rect = drawing.get("rect")
+    if rect is not None:
+        return (
+            float(rect.x0),
+            float(rect.y0),
+            float(rect.x1),
+            float(rect.y1),
+        )
+
+    bbox = drawing.get("bbox")
+    if bbox is not None:
+        return (
+            float(bbox[0]),
+            float(bbox[1]),
+            float(bbox[2]),
+            float(bbox[3]),
+        )
+
+    return None
+
+
+def _line_near_text(drawing_bbox, text_bbox) -> bool:
+    """
+    Determine whether a drawing is plausibly an underline for a
+    particular text span.
+    """
+    if not drawing_bbox or not text_bbox:
+        return False
+
+    dx0, dy0, dx1, dy1 = drawing_bbox
+    tx0, ty0, tx1, ty1 = text_bbox
+
+    text_height = max(1.0, ty1 - ty0)
+    text_width = max(1.0, tx1 - tx0)
+
+    # ------------------------------------------------------------
+    # Horizontal overlap
+    # ------------------------------------------------------------
+    overlap_x = max(0.0, min(dx1, tx1) - max(dx0, tx0))
+    if overlap_x <= 0:
+        return False
+
+    overlap_ratio = overlap_x / text_width
+    if overlap_ratio < 0.35:
+        return False
+
+    # ------------------------------------------------------------
+    # Underline should be near the bottom of text.
+    # ------------------------------------------------------------
+    line_y = (dy0 + dy1) / 2.0
+    distance_from_bottom = abs(line_y - ty1)
+    tolerance = max(2.5, text_height * 0.35)
+    if distance_from_bottom > tolerance:
+        return False
+
+    # ------------------------------------------------------------
+    # Underline should be thin.
+    # ------------------------------------------------------------
+    drawing_height = abs(dy1 - dy0)
+    if drawing_height > max(4.0, text_height * 0.30):
+        return False
+
+    # ------------------------------------------------------------
+    # Don't associate a much wider page/table separator with text.
+    # ------------------------------------------------------------
+    if dx0 < tx0 - text_height or dx1 > tx1 + text_height:
+        return False
+
+    return True
+
+
+# Underline look-up uses a coarse y-axis spatial index. Underlines sit just
+# below a span's baseline, so instead of testing EVERY line-like drawing
+# against every span (O(spans x drawings) — artboards with summary tables and
+# keyline boxes have hundreds of thin rects/separators), drawings are bucketed
+# by their vertical midpoint and each span only checks buckets near its
+# baseline. BUCKET tighter than the tolerance window => no missed matches.
+_UNDERLINE_BUCKET_SIZE = 6.0
+
+
+def _extract_page_drawings(page):
+    """
+    Extract drawing objects for one PDF page into a y-bucketed spatial index.
+
+    Only line-like objects are retained because arbitrary artwork contains
+    many unrelated vector drawings. Returns {bucket_id: [drawing, ...]} where
+    bucket_id indexes the drawing's vertical midpoint in coarse bands.
+    """
+    bucket_index = {}
+
+    try:
+        page_drawings = page.get_drawings()
+    except Exception:
+        page_drawings = []
+
+    for drawing in page_drawings:
+        if not _drawing_is_line_like(drawing):
+            continue
+
+        bbox = _drawing_bbox(drawing)
+        if bbox is None:
+            continue
+
+        mid_y = (bbox[1] + bbox[3]) / 2.0
+        bucket = int(math.floor(mid_y / _UNDERLINE_BUCKET_SIZE))
+
+        bucket_index.setdefault(bucket, []).append({
+            "bbox": bbox,
+            "type": drawing.get("type"),
+            "width": drawing.get("width"),
+            "items": drawing.get("items", []),
+        })
+
+    return bucket_index
+
+
+def _span_is_underlined(span_bbox, drawings_index) -> bool:
+    """
+    Determine whether a span has a nearby underline drawing.
+
+    Uses the y-bucketed drawing index so only drawings whose vertical band
+    sits within the underline tolerance of the span's baseline are tested,
+    instead of scanning every line-like drawing on the page per span.
+    """
+    if not span_bbox:
+        return False
+
+    expanded_bbox = _expand_bbox(span_bbox, margin=1.5)
+    if not expanded_bbox:
+        return False
+
+    _, ty0, _, ty1 = expanded_bbox
+    text_height = max(1.0, ty1 - ty0)
+
+    # _line_near_text allows the drawing's midline to be up to
+    # max(2.5, text_height*0.35) from the baseline, and the drawing is thin.
+    # Search a radius around the baseline generous enough to cover any
+    # candidate whose bucket straddles that window.
+    search_radius = max(6.0, text_height * 0.35 + 6.0)
+    lo_bucket = int(math.floor((ty1 - search_radius) / _UNDERLINE_BUCKET_SIZE))
+    hi_bucket = int(math.floor((ty1 + search_radius) / _UNDERLINE_BUCKET_SIZE))
+
+    for bucket in range(lo_bucket, hi_bucket + 1):
+        for drawing in drawings_index.get(bucket, ()):
+            drawing_bbox = drawing.get("bbox")
+            if _line_near_text(drawing_bbox, expanded_bbox):
+                return True
+
+    return False
+
+
+def _build_span_metadata(span, page_drawings):
+    """
+    Build the complete formatting metadata for one PyMuPDF span.
+    """
+    font_name = span.get("font", "")
+    text = span.get("text", "")
+    bbox = span.get("bbox")
+    flags = span.get("flags", 0)
+    color = span.get("color", 0)
+
+    return {
+        "text": text,
+        "font": font_name,
+        "size": span.get("size"),
+        "bold": _is_bold(flags, font_name),
+        "italic": _is_italic(flags, font_name),
+        "color": _color_int_to_rgb(color),
+        "underline": _span_is_underlined(bbox, page_drawings),
+        "bbox": bbox,
+    }
 
 
 def extract_words(pdf_path: str) -> pd.DataFrame:
@@ -175,6 +405,7 @@ def extract_lines(pdf_path: str) -> pd.DataFrame:
                     logger.info(f"OCR fallback failed for page {page_number}: {ocr_err}")
                 continue
 
+            page_drawings = _extract_page_drawings(page)
             page_dict = page.get_text("dict")
 
             for block in page_dict["blocks"]:
@@ -189,18 +420,10 @@ def extract_lines(pdf_path: str) -> pd.DataFrame:
 
                     for span in line["spans"]:
                         line_text += span["text"]
-                        sizes.append(span["size"])
+                        if span.get("size") is not None:
+                            sizes.append(span["size"])
 
-                        font_name = span["font"]
-                        spans_meta.append({
-                            "text": span["text"],
-                            "font": font_name,
-                            "size": span["size"],
-                            "bold": _is_bold(span["flags"], font_name),
-                            "italic": _is_italic(span["flags"], font_name),
-                            "color": _color_int_to_rgb(span["color"]),
-                            "bbox": span["bbox"],
-                        })
+                        spans_meta.append(_build_span_metadata(span, page_drawings))
 
                     line_text = line_text.strip()
 
@@ -240,6 +463,7 @@ def extract_blocks(pdf_path: str) -> pd.DataFrame:
         rows = []
 
         for page_number, page in enumerate(doc):
+            page_drawings = _extract_page_drawings(page)
             page_dict = page.get_text("dict")
 
             for block in page_dict["blocks"]:
@@ -257,18 +481,10 @@ def extract_blocks(pdf_path: str) -> pd.DataFrame:
 
                     for span in line["spans"]:
                         block_text += span["text"]
-                        sizes.append(span["size"])
+                        if span.get("size") is not None:
+                            sizes.append(span["size"])
 
-                        font_name = span["font"]
-                        spans_meta.append({
-                            "text": span["text"],
-                            "font": font_name,
-                            "size": span["size"],
-                            "bold": _is_bold(span["flags"], font_name),
-                            "italic": _is_italic(span["flags"], font_name),
-                            "color": _color_int_to_rgb(span["color"]),
-                            "bbox": span["bbox"],
-                        })
+                        spans_meta.append(_build_span_metadata(span, page_drawings))
                     block_text += " "
 
                 block_text = block_text.strip()

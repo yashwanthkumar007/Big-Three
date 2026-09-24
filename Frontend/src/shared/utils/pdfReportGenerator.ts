@@ -7,6 +7,7 @@ import type {
 } from "@/store/uploadStore";
 import type { ReportOptions } from "@/features/workspace/components/ReportOptionsDialog";
 import { getInspectionLabel } from "@/shared/config/inspectionConfig";
+import { logAuditEvent } from "@/features/admin/systemApi";
 import OrganizationLogo from "@/assets/logos/icon.png";
 
 /* ------------------------------------------------------------------ */
@@ -602,8 +603,10 @@ function drawReportParameters(
     ["Insertion", differenceFilters.insertion],
     ["Location", differenceFilters.location],
     ["Bold", differenceFilters.bold],
+    ["Italic", differenceFilters.italic],
     ["Color", differenceFilters.color],
     ["Font Type", differenceFilters.fontType],
+    ["Mixed Font", differenceFilters.mixedFont],
     ["Space", differenceFilters.space],
     ["Size", differenceFilters.size],
     ["Underline", differenceFilters.underline],
@@ -991,7 +994,7 @@ export async function generateInspectionPdf({
     { label: "Space", count: countByType("Space") },
     { label: "Bold", count: countByType("Bold") },
     { label: "Color", count: countByType("Color") },
-    { label: "Fonts (Mixed)", count: countByType("Font Type") },
+    { label: "Fonts (Mixed)", count: countByType("Mixed Font") },
     { label: "Italic", count: countByType("Italic") },
     { label: "Size", count: countByType("Size") },
     { label: "Sub/Super", count: countByType("Sub/Super") },
@@ -1165,6 +1168,22 @@ export async function downloadInspectionPdf({
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+
+    // Audit: record that the report PDF was downloaded (best-effort, after a
+    // successful generation so failed downloads are not logged as completed).
+    const selectedLevelKeys = Object.keys(levelSelections ?? {}).length;
+    void logAuditEvent({
+      event: "REPORT_DOWNLOADED",
+      action: "Download Report",
+      module: "Report",
+      description: `Report PDF downloaded. Inspection ID=${sessionId}`,
+      inspectionId: sessionId,
+      metadata: {
+        inspectionType,
+        fileName,
+        selectedLevelCount: selectedLevelKeys,
+      },
+    });
 
     console.log("[PDF REPORT] PDF generation completed");
   } catch (error) {

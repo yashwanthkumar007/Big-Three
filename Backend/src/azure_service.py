@@ -183,7 +183,7 @@ def upload_blob(container_name: str, blob_name: str, data: Union[bytes, str], co
         headers = _get_subscription_headers(settings, is_storage=True).copy()
         headers.pop("Content-Type", None)
         payload = data.encode("utf-8") if isinstance(data, str) else data
-        response = _request_with_apim_fallback("POST", url, headers=headers, data=payload, timeout=30)
+        response = _request_with_apim_fallback("PUT", url, headers=headers, data=payload, timeout=30)
         response.raise_for_status()
         return url
 
@@ -322,7 +322,7 @@ def upload_blob(container_name: str, blob_name: str, data: Union[bytes, str], co
         headers = _get_subscription_headers(settings, is_storage=True).copy()
         headers.pop("Content-Type", None)
         payload = data.encode("utf-8") if isinstance(data, str) else data
-        response = requests.post(url, headers=headers, data=payload)
+        response = _request_with_apim_fallback("PUT", url, headers=headers, data=payload, timeout=30)
         response.raise_for_status()
         return url
 
@@ -338,7 +338,7 @@ def download_blob(container_name: str, blob_name: str) -> bytes:
     settings = get_azure_settings()
     if settings.storage_api_base_url:
         url = _get_storage_url(settings, folder_name=container_name, file_name=blob_name)
-        response = requests.get(url, headers=_get_subscription_headers(settings, is_storage=True))
+        response = _request_with_apim_fallback("GET", url, headers=_get_subscription_headers(settings, is_storage=True), timeout=30)
         response.raise_for_status()
         return response.content
 
@@ -351,7 +351,7 @@ def delete_blob(container_name: str, blob_name: str) -> None:
     settings = get_azure_settings()
     if settings.storage_api_base_url:
         url = _get_storage_url(settings, folder_name=container_name, file_name=blob_name)
-        response = requests.delete(url, headers=_get_subscription_headers(settings, is_storage=True))
+        response = _request_with_apim_fallback("DELETE", url, headers=_get_subscription_headers(settings, is_storage=True), timeout=30)
         if response.status_code not in (200, 202, 404):
             response.raise_for_status()
         return
