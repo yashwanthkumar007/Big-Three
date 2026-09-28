@@ -483,6 +483,18 @@ export async function getSystemInformation(): Promise<SystemInformation> {
 
 /* ---------- Users ---------- */
 
+export async function downloadAdminList(path: "/api/users/export" | "/api/sessions/export", format: "pdf" | "xlsx", filename: string): Promise<void> {
+  const response = await api.get<Blob>(path, { params: { format }, responseType: "blob" });
+  const url = URL.createObjectURL(response.data);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${filename}.${format}`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 export async function getUsers(): Promise<User[]> {
   try {
     // Fetch users from Cosmos DB via the backend API
@@ -877,6 +889,34 @@ export async function getAuditLogs(filters?: AuditLogFilters): Promise<AuditLogR
         limit: mockItems.length,
         total: mockItems.length,
       };
+    }
+    throw new Error(getErrorMessage(error));
+  }
+}
+
+export async function downloadAuditLogs(filters: AuditLogFilters, format: "pdf" | "xlsx"): Promise<void> {
+  try {
+    const response = await api.get<Blob>("/api/audit-logs/export", {
+      params: { ...filters, page: undefined, limit: undefined, format },
+      responseType: "blob",
+    });
+    const url = URL.createObjectURL(response.data);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `audit_trail.${format}`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    if (axios.isAxiosError(error) && error.response?.data instanceof Blob) {
+      try {
+        const payload = JSON.parse(await error.response.data.text()) as { error?: string; message?: string };
+        throw new Error(payload.error ?? payload.message ?? "PDF export failed. Please try again.");
+      } catch (parseError) {
+        if (parseError instanceof Error && parseError.message !== "Unexpected end of JSON input") throw parseError;
+        throw new Error("PDF export failed. Please try again.");
+      }
     }
     throw new Error(getErrorMessage(error));
   }

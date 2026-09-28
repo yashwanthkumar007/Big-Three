@@ -16,7 +16,11 @@ export function useSetupConfig(enabled = true) {
     queryKey: SETUP_CONFIG_QUERY_KEY,
     queryFn: () => getSetupLevelsComments(),
     enabled,
+    // Keep the setup configuration available when administrators navigate
+    // between settings pages. The page can render cached values immediately,
+    // while a stale query is refreshed in the background.
     staleTime: 60_000,
+    gcTime: 24 * 60 * 60 * 1000,
   });
 }
 

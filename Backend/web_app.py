@@ -89,6 +89,9 @@ from src.audit_constants import (
     REPORT_CREATED,
     REPORT_VIEWED,
     REPORT_DOWNLOADED,
+    AUDIT_TRAIL_DOWNLOADED,
+    USER_LIST_DOWNLOADED,
+    LOGGED_IN_USERS_DOWNLOADED,
     SYSTEM_SETTINGS_UPDATED,
     PROFILE_CREATED,
     PROFILE_UPDATED,
@@ -2724,6 +2727,145 @@ def api_audit_logs():
     except Exception as exc:
         logger.error("[AUDIT] Failed to retrieve audit logs: %s", exc)
         return jsonify({"error": "Failed to retrieve audit logs."}), 500
+def _admin_table_export(records, keys, labels, filename_stem, title, format_arg):
+    from flask import send_file
+    from src.audit_export import build_excel, build_pdf
+    export_format = (format_arg or "pdf").strip().lower()
+    if export_format == "excel":
+        export_format = "xlsx"
+    if export_format not in ("pdf", "xlsx"):
+        return jsonify({"error": "format must be 'pdf' or 'xlsx'."}), 400
+    rows = [[str(record.get(key, "") or "") for key in keys] for record in records]
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    try:
+        if export_format == "xlsx":
+            buf = build_excel(rows, headers=labels, sheet_name=title[:31])
+            return send_file(buf, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", as_attachment=True, download_name=f"{filename_stem}_{stamp}.xlsx")
+        buf = build_pdf(rows, headers=labels, title=title)
+        return send_file(buf, mimetype="application/pdf", as_attachment=True, download_name=f"{filename_stem}_{stamp}.pdf")
+    except Exception as exc:
+        logger.exception("[ADMIN] Failed to create %s export", export_format.upper())
+        return jsonify({"error": f"Failed to create {export_format.upper()} export: {exc}"}), 500
+
+
+@app.route("/api/users/export", methods=["GET"])
+def api_users_export():
+    _, error = _authenticated_user_and_error()
+    if error:
+        return error
+    try:
+        records = cosmos_query_documents("users", {"query": "SELECT * FROM c ORDER BY c.createdAt DESC"}) or []
+    except Exception as exc:
+        logger.error("[ADMIN] Failed to export users: %s", exc)
+        return jsonify({"error": "Failed to export users."}), 500
+    headers = ["username", "email", "firstName", "lastName", "accountType", "accountStatus", "company", "lastLogin", "createdAt", "email_verified"]
+    labels = ["Username", "Email", "First Name", "Last Name", "Account Type", "Status", "Company", "Last Login", "Created Date", "Email Verified"]
+    export_records = []
+    for record in records:
+        row_record = dict(record)
+        verified = row_record.get("email_verified")
+        row_record["email_verified"] = "Verified" if verified is True else "Not Verified"
+        export_records.append(row_record)
+    return _admin_table_export(export_records, headers, labels, "user_management", "User Management", request.args.get("format"))
+
+
+@app.route("/api/sessions/export", methods=["GET"])
+def api_sessions_export():
+    _, error = _authenticated_user_and_error()
+    if error:
+        return error
+    records = [_session_entry_to_client(session) for session in _list_sessions()]
+    headers = ["user", "email", "loginTime", "lastActivity", "ipAddress", "browser", "operatingSystem", "sessionStatus"]
+    labels = ["User", "Email", "Login Time", "Last Activity", "IP Address", "Browser", "Operating System", "Session Status"]
+    return _admin_table_export(records, headers, labels, "logged_in_users", "Logged-in Users", request.args.get("format"))
+
+
+
+
+
+@app.route("/api/audit-logs/export", methods=["GET"])
+def api_audit_logs_export():
+    """Export audit logs (administrator-only) as PDF or Excel."""
+    from flask import send_file
+    from src.audit_export import build_excel, build_pdf, export_rows
+
+    admin_user, error = _authenticated_user_and_error()
+    if error:
+        return error
+
+    export_format = (request.args.get("format", "pdf") or "pdf").strip().lower()
+    if export_format == "excel":
+        export_format = "xlsx"
+    if export_format not in ("pdf", "xlsx"):
+        return jsonify({"error": "format must be 'pdf' or 'xlsx'."}), 400
+
+    conditions = ["c.domain = @domain"]
+    parameters = [{"name": "@domain", "value": AUDIT_LOGS_CONTAINER}]
+    _audit_filter_params(conditions, parameters)
+    where_clause = " AND ".join(conditions)
+    query = {
+        "query": f"SELECT * FROM c WHERE {where_clause} ORDER BY c.timestamp DESC",
+        "parameters": parameters,
+    }
+    try:
+        records = cosmos_query_documents(AUDIT_LOGS_CONTAINER, query) or []
+    except Exception as exc:
+        logger.error("[AUDIT] Failed to export audit logs: %s", exc)
+        return jsonify({"error": "Failed to export audit logs."}), 500
+
+    rows = export_rows(records)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    try:
+        if export_format == "xlsx":
+            buf = build_excel(rows)
+            return send_file(buf, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", as_attachment=True, download_name=f"audit_trail_{stamp}.xlsx")
+        buf = build_pdf(rows)
+        return send_file(buf, mimetype="application/pdf", as_attachment=True, download_name=f"audit_trail_{stamp}.pdf")
+    except Exception as exc:
+        logger.exception("[AUDIT] Failed to create %s export", export_format.upper())
+        if isinstance(exc, ImportError):
+            return jsonify({"error": f"Export library missing: {exc}"}), 500
+        return jsonify({"error": f"Failed to create {export_format.upper()} export: {exc}"}), 500
+
+
+def _audit_filter_params(conditions, parameters):
+    """Append shared audit-log filter params from request.args."""
+    start_date = request.args.get("startDate", "")
+    end_date = request.args.get("endDate", "")
+    user_id = request.args.get("userId", "")
+    account_type = request.args.get("accountType", "")
+    event = request.args.get("event", "")
+    module = request.args.get("module", "")
+    status = request.args.get("status", "")
+    inspection_id = request.args.get("inspectionId", "")
+    search = request.args.get("search", "")
+    if start_date:
+        conditions.append("c.timestamp >= @startDate")
+        parameters.append({"name": "@startDate", "value": start_date})
+    if end_date:
+        conditions.append("c.timestamp <= @endDate")
+        parameters.append({"name": "@endDate", "value": end_date})
+    if user_id:
+        conditions.append("c.userId = @userId")
+        parameters.append({"name": "@userId", "value": user_id})
+    if account_type:
+        conditions.append("c.accountType = @accountType")
+        parameters.append({"name": "@accountType", "value": account_type})
+    if event:
+        conditions.append("c.event = @event")
+        parameters.append({"name": "@event", "value": event})
+    if module:
+        conditions.append("c.module = @module")
+        parameters.append({"name": "@module", "value": module})
+    if status:
+        conditions.append("c.status = @status")
+        parameters.append({"name": "@status", "value": status})
+    if inspection_id:
+        conditions.append("c.inspectionId = @inspectionId")
+        parameters.append({"name": "@inspectionId", "value": inspection_id})
+    if search:
+        conditions.append("(CONTAINS(LOWER(c.description), LOWER(@search)) OR CONTAINS(LOWER(c.email), LOWER(@search)) OR CONTAINS(LOWER(c.action), LOWER(@search)))")
+        parameters.append({"name": "@search", "value": search})
 
 
 @app.route("/api/audit-logs/<log_id>", methods=["GET"])
@@ -2778,6 +2920,9 @@ _AUDIT_CLIENT_ALLOWED_EVENTS = {
     DIFFERENCE_COMMENT_UPDATED,
     DIFFERENCE_STATUS_CHANGED,
     REPORT_DOWNLOADED,
+    AUDIT_TRAIL_DOWNLOADED,
+    USER_LIST_DOWNLOADED,
+    LOGGED_IN_USERS_DOWNLOADED,
 }
 
 

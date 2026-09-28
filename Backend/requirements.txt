@@ -12,3 +12,4 @@ pytesseract
 azure-cosmos
 azure-storage-blob
 azure-identity
+reportlab
