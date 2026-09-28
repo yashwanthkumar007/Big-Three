@@ -122,6 +122,19 @@ export type CharacterDifference = {
   index: number;
 };
 
+const DARK_BLUE_TOOLTIP_SLOT_PROPS = {
+  tooltip: {
+    sx: {
+      bgcolor: "#2A276E",
+      color: "#ffffff",
+    },
+  },
+  arrow: {
+    sx: { color: "#2A276E" },
+  },
+} as const;
+
+
 /**
  * Ligature normalization for the character-comparison layer ONLY.
  *
@@ -1070,7 +1083,7 @@ export default function InspectionResults({
           sx={{ mx: 1 }}
         />
 
-        <Tooltip title="Share" arrow>
+        <Tooltip title="Share" arrow slotProps={DARK_BLUE_TOOLTIP_SLOT_PROPS}>
           <IconButton
             size="small"
             onClick={handleShareOpen}
@@ -1087,7 +1100,7 @@ export default function InspectionResults({
           </IconButton>
         </Tooltip>
 
-        <Tooltip title="Zoom" arrow>
+        <Tooltip title="Zoom" arrow slotProps={DARK_BLUE_TOOLTIP_SLOT_PROPS}>
           <IconButton
             size="small"
             sx={{
@@ -1103,7 +1116,7 @@ export default function InspectionResults({
           </IconButton>
         </Tooltip>
 
-        <Tooltip title="Change the sample" arrow>
+        <Tooltip title="Change the sample" arrow slotProps={DARK_BLUE_TOOLTIP_SLOT_PROPS}>
           <IconButton
             size="small"
             sx={{
@@ -1119,7 +1132,7 @@ export default function InspectionResults({
           </IconButton>
         </Tooltip>
 
-        <Tooltip title="Annotation list" arrow>
+        <Tooltip title="Annotation list" arrow slotProps={DARK_BLUE_TOOLTIP_SLOT_PROPS}>
           <IconButton
             size="small"
             sx={{
@@ -1135,7 +1148,7 @@ export default function InspectionResults({
           </IconButton>
         </Tooltip>
 
-        <Tooltip title="Download the PDF report" arrow>
+        <Tooltip title="Download the PDF report" arrow slotProps={DARK_BLUE_TOOLTIP_SLOT_PROPS}>
           <IconButton
             size="small"
             onClick={handleDownloadClick}
@@ -1152,7 +1165,7 @@ export default function InspectionResults({
           </IconButton>
         </Tooltip>
 
-        <Tooltip title="Open difference list" arrow>
+        <Tooltip title="Open difference list" arrow slotProps={DARK_BLUE_TOOLTIP_SLOT_PROPS}>
           <IconButton
             size="small"
             onClick={handleOpenDifferenceList}
@@ -1216,6 +1229,7 @@ export default function InspectionResults({
                 : "Crop Compare — drag a rectangle on the Master page to inspect just that region"
             }
             arrow
+            slotProps={DARK_BLUE_TOOLTIP_SLOT_PROPS}
           >
             <IconButton
               size="small"

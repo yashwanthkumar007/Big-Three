@@ -2,9 +2,11 @@ import { useEffect, useState } from "react";
 import {
   Alert,
   Box,
+  Button,
   Chip,
   CircularProgress,
   Drawer,
+  Menu,
   MenuItem,
   Table,
   TableBody,
@@ -17,8 +19,9 @@ import {
   Typography,
 } from "@mui/material";
 
-import { getAuditLogs, type AuditLog, type AuditLogFilters } from "../systemApi";
 import { BRAND_NAVY, fmtDateTime } from "../components/adminUtils";
+import { getAuditLogs, downloadAuditLogs, logAuditEvent, type AuditLog, type AuditLogFilters } from "../systemApi";
+import FileDownloadOutlinedIcon from "@mui/icons-material/FileDownloadOutlined";
 
 const MODULES = [
   "All",
@@ -27,6 +30,7 @@ const MODULES = [
   "Profile",
   "System Setup",
   "Text Inspection",
+  "Audit Trail",
   "REST API",
 ];
 
@@ -60,6 +64,9 @@ const EVENTS = [
   "REPORT_CREATED",
   "REPORT_VIEWED",
   "REPORT_DOWNLOADED",
+  "AUDIT_TRAIL_DOWNLOADED",
+  "USER_LIST_DOWNLOADED",
+  "LOGGED_IN_USERS_DOWNLOADED",
 ];
 
 // Small standalone label used above the date pickers instead of MUI's
@@ -87,9 +94,13 @@ const statusChip = (status: string) => (
 
 const COLUMNS = ["Date/Time", "User", "Account Type", "Event", "Module", "Description", "IP Address", "Status"];
 
+// Keep the last default audit page available while navigating between admin pages.
+let cachedAuditLogs: AuditLog[] | null = null;
+let cachedAuditTotal = 0;
+
 export default function AuditTrailPage() {
-  const [logs, setLogs] = useState<AuditLog[] | null>(null);
-  const [total, setTotal] = useState(0);
+  const [logs, setLogs] = useState<AuditLog[] | null>(cachedAuditLogs);
+  const [total, setTotal] = useState(cachedAuditTotal);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [module, setModule] = useState("All");
@@ -102,6 +113,34 @@ export default function AuditTrailPage() {
   const [rowsPerPage, setRowsPerPage] = useState(25);
   const [selectedLog, setSelectedLog] = useState<AuditLog | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [downloading, setDownloading] = useState<"pdf" | "xlsx" | null>(null);
+  const [downloadMenuAnchor, setDownloadMenuAnchor] = useState<HTMLElement | null>(null);
+
+  const currentFilters = (): AuditLogFilters => ({
+    ...(module !== "All" ? { module } : {}),
+    ...(eventFilter !== "All" ? { event: eventFilter } : {}),
+    ...(statusFilter !== "All" ? { status: statusFilter } : {}),
+    ...(search.trim() ? { search: search.trim() } : {}),
+    ...(startDate ? { startDate } : {}),
+    ...(endDate ? { endDate } : {}),
+  });
+
+  const handleDownload = async (format: "pdf" | "xlsx") => {
+    setDownloading(format);
+    setError(null);
+    try {
+      await downloadAuditLogs(currentFilters(), format);
+      const formatLabel = format === "pdf" ? "PDF" : "Excel";
+      void logAuditEvent({
+        event: "AUDIT_TRAIL_DOWNLOADED",
+        action: "Download Audit Trail",
+        module: "Audit Trail",
+        description: `Downloaded filtered audit trail as ${formatLabel}.`,
+        metadata: { format, filters: currentFilters() },
+      });
+    } catch (err) { setError(err instanceof Error ? err.message : "Failed to download audit records."); }
+    finally { setDownloading(null); }
+  };
 
   // Fetch logs from backend with current filters
   const fetchLogs = async () => {
@@ -119,6 +158,8 @@ export default function AuditTrailPage() {
         ...(endDate ? { endDate } : {}),
       };
       const response = await getAuditLogs(filters);
+      cachedAuditLogs = response.items;
+      cachedAuditTotal = response.total;
       setLogs(response.items);
       setTotal(response.total);
     } catch (err) {
@@ -169,9 +210,33 @@ export default function AuditTrailPage() {
 
   return (
     <Box sx={{ p: { xs: 2, md: 4 }, minHeight: "100vh", background: "linear-gradient(180deg,#F7F8FC 0%,#EEF1FA 100%)" }}>
-      <Box sx={{ p: 3, mb: 3, borderRadius: 3, bgcolor: "#fff", boxShadow: "0 10px 30px rgba(42,39,110,.08)" }}><Box sx={{ display:"flex", alignItems:"center", gap:2 }}><Box sx={{ width:52, height:52, borderRadius:"50%", background:"linear-gradient(135deg,#2A276E,#3F3B99)", display:"flex", alignItems:"center", justifyContent:"center", color:"#fff", fontWeight:700 }}>🛡</Box><Box><Typography variant="h4" sx={{ fontWeight: 700, color: BRAND_NAVY }}>
-        Audit Trail
-      </Typography><Typography variant="body2" color="text.secondary">Immutable log of administrative and inspection actions. Records cannot be edited or deleted.</Typography></Box></Box></Box>
+      <Box sx={{ p: 3, mb: 3, borderRadius: 3, bgcolor: "#fff", boxShadow: "0 10px 30px rgba(42,39,110,.08)" }}>
+        <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 2 }}>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+            <Box sx={{ width: 52, height: 52, borderRadius: "50%", background: "linear-gradient(135deg,#2A276E,#3F3B99)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 700 }}>🛡</Box>
+            <Box><Typography variant="h4" sx={{ fontWeight: 700, color: BRAND_NAVY }}>Audit Trail</Typography><Typography variant="body2" color="text.secondary">Immutable log of administrative and inspection actions.</Typography></Box>
+          </Box>
+          <Box sx={{ display: "flex", gap: 1 }}>
+            <Button
+              variant="contained"
+              startIcon={<FileDownloadOutlinedIcon />}
+              disabled={downloading !== null}
+              onClick={(event) => setDownloadMenuAnchor(event.currentTarget)}
+              sx={{ bgcolor: BRAND_NAVY, "&:hover": { bgcolor: "#1f1d55" } }}
+            >
+              {downloading ? `${downloading.toUpperCase()}...` : "Download Audit Trail"}
+            </Button>
+            <Menu
+              anchorEl={downloadMenuAnchor}
+              open={Boolean(downloadMenuAnchor)}
+              onClose={() => setDownloadMenuAnchor(null)}
+            >
+              <MenuItem onClick={() => { setDownloadMenuAnchor(null); void handleDownload("pdf"); }}>Download PDF</MenuItem>
+              <MenuItem onClick={() => { setDownloadMenuAnchor(null); void handleDownload("xlsx"); }}>Download Excel</MenuItem>
+            </Menu>
+          </Box>
+        </Box>
+      </Box>
       <Typography variant="body2" color="text.secondary" sx={{ display:"none" }}>
         Immutable log of administrative and inspection actions. Records cannot be edited or deleted.
       </Typography>

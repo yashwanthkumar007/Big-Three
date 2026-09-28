@@ -1,10 +1,14 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   Alert,
   Box,
   Chip,
   CircularProgress,
   IconButton,
+  Button,
+  Menu,
+  MenuItem,
   Paper,
   Table,
   TableBody,
@@ -17,8 +21,9 @@ import {
 } from "@mui/material";
 import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
 import GroupsOutlinedIcon from "@mui/icons-material/GroupsOutlined";
+import FileDownloadOutlinedIcon from "@mui/icons-material/FileDownloadOutlined";
 
-import { getLoggedInUsers, type LoggedInUser } from "../systemApi";
+import { downloadAdminList, getLoggedInUsers, logAuditEvent, type LoggedInUser } from "../systemApi";
 import { BRAND_NAVY, fmtDateTime } from "../components/adminUtils";
 import { DetailDialog, SnackBar, type Snack } from "../components/adminUi";
 
@@ -35,18 +40,29 @@ const COLUMNS = [
 ];
 
 export default function LoggedInUsersPage() {
-  const [sessions, setSessions] = useState<LoggedInUser[] | null>(null);
+  const { data, isPending } = useQuery({
+    queryKey: ["admin", "logged-in-users"],
+    queryFn: getLoggedInUsers,
+    staleTime: 5000,
+  });
+  const sessions = data ?? [];
   const [error, setError] = useState<string | null>(null);
   const [viewUser, setViewUser] = useState<LoggedInUser | null>(null);
   const [snack, setSnack] = useState<Snack>(null);
+  const [downloading, setDownloading] = useState<"pdf" | "xlsx" | null>(null);
+  const [downloadMenuAnchor, setDownloadMenuAnchor] = useState<HTMLElement | null>(null);
 
-  const load = () => {
-    getLoggedInUsers()
-      .then(setSessions)
-      .catch((err: Error) => setError(err.message));
+  const handleDownload = async (format: "pdf" | "xlsx") => {
+    setDownloadMenuAnchor(null);
+    setDownloading(format);
+    setError(null);
+    try {
+      await downloadAdminList("/api/sessions/export", format, "logged_in_users");
+      void logAuditEvent({ event: "LOGGED_IN_USERS_DOWNLOADED", action: "Download Logged-in Users", module: "User Management", description: `Downloaded logged-in users as ${format === "pdf" ? "PDF" : "Excel"}.`, metadata: { format, recordCount: sessions?.length ?? 0 } });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to download logged-in users.");
+    } finally { setDownloading(null); }
   };
-
-  useEffect(load, []);
 
   const detailRows = viewUser
     ? ([
@@ -110,7 +126,8 @@ export default function LoggedInUsersPage() {
           boxShadow: "0 10px 30px rgba(42,39,110,.08)",
         }}
       >
-        <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+        <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 2 }}>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
           <Box
             sx={{
               width: 52,
@@ -140,6 +157,16 @@ export default function LoggedInUsersPage() {
             <Typography color="text.secondary">
               Monitor active user sessions across the application.
             </Typography>
+          </Box>
+          </Box>
+          <Box>
+            <Button variant="contained" startIcon={<FileDownloadOutlinedIcon />} disabled={downloading !== null} onClick={(event) => setDownloadMenuAnchor(event.currentTarget)} sx={{ background: "linear-gradient(135deg,#2A276E,#3F3B99)", px: 3, py: 1.2, borderRadius: 2.5, boxShadow: "0 8px 24px rgba(42,39,110,.25)", transition: "all .25s ease", "&:hover": { transform: "translateY(-2px)", boxShadow: "0 12px 30px rgba(42,39,110,.35)", background: "linear-gradient(135deg,#242162,#2A276E)" } }}>
+              {downloading ? `${downloading.toUpperCase()}...` : "Download"}
+            </Button>
+            <Menu anchorEl={downloadMenuAnchor} open={Boolean(downloadMenuAnchor)} onClose={() => setDownloadMenuAnchor(null)}>
+              <MenuItem onClick={() => void handleDownload("pdf")}>Download PDF</MenuItem>
+              <MenuItem onClick={() => void handleDownload("xlsx")}>Download Excel</MenuItem>
+            </Menu>
           </Box>
         </Box>
       </Paper>
@@ -187,7 +214,7 @@ export default function LoggedInUsersPage() {
           </TableHead>
 
           <TableBody>
-            {!sessions ? (
+            {isPending ? (
               <TableRow>
                 <TableCell
                   colSpan={COLUMNS.length}

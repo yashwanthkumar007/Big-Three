@@ -9,6 +9,7 @@ import {
   DialogContent,
   DialogTitle,
   IconButton,
+  Menu,
   MenuItem,
   Table,
   TableBody,
@@ -28,6 +29,7 @@ import BlockOutlinedIcon from "@mui/icons-material/BlockOutlined";
 import CheckCircleOutlineOutlinedIcon from "@mui/icons-material/CheckCircleOutlineOutlined";
 import LockResetOutlinedIcon from "@mui/icons-material/LockResetOutlined";
 import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined";
+import FileDownloadOutlinedIcon from "@mui/icons-material/FileDownloadOutlined";
 import SendOutlinedIcon from "@mui/icons-material/SendOutlined";
 import DoneOutlinedIcon from "@mui/icons-material/DoneOutlined";
 import { Controller, useForm } from "react-hook-form";
@@ -36,8 +38,10 @@ import {
   createUser,
   deleteUser,
   disableUser,
+  downloadAdminList,
   enableUser,
   getUsers,
+  logAuditEvent,
   resetUserPassword,
   sendVerificationEmail,
   updateUser,
@@ -55,6 +59,10 @@ const ACCOUNT_TYPES: AccountTypeOption[] = ["user", "Administrator"];
 const normalizeAccountType = (value: string): AccountTypeOption =>
   value.trim().toLowerCase() === "administrator" ? "Administrator" : "user";
 const STATUSES: UserStatus[] = ["Active", "Inactive", "Locked"];
+
+// Reuse the most recently loaded list during navigation. The background request
+// still runs, so a subsequent visit is immediate without showing stale data forever.
+let cachedUsers: User[] | null = null;
 const COLUMNS = [
   "Username",
   "Email",
@@ -419,7 +427,7 @@ function UserFormDialog({
 }
 
 export default function UserManagementPage() {
-  const [users, setUsers] = useState<User[] | null>(null);
+  const [users, setUsers] = useState<User[] | null>(cachedUsers);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
@@ -431,6 +439,8 @@ export default function UserManagementPage() {
   const [busy, setBusy] = useState(false);
   const [snack, setSnack] = useState<Snack>(null);
   const [sending, setSending] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState<"pdf" | "xlsx" | null>(null);
+  const [downloadMenuAnchor, setDownloadMenuAnchor] = useState<HTMLElement | null>(null);
 
   const load = () => {
     getUsers()
@@ -444,6 +454,7 @@ export default function UserManagementPage() {
     const doLoad = async () => {
       try {
         const data = await getUsers();
+        cachedUsers = data;
         if (active) setUsers(data);
       } catch (err) {
         if (active) setError(err instanceof Error ? err.message : "Failed to load users.");
@@ -461,6 +472,18 @@ export default function UserManagementPage() {
     () => (users ?? []).slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage),
     [users, page, rowsPerPage]
   );
+
+  const handleDownload = async (format: "pdf" | "xlsx") => {
+    setDownloadMenuAnchor(null);
+    setDownloading(format);
+    setError(null);
+    try {
+      await downloadAdminList("/api/users/export", format, "user_management");
+      void logAuditEvent({ event: "USER_LIST_DOWNLOADED", action: "Download User List", module: "User Management", description: `Downloaded user list as ${format === "pdf" ? "PDF" : "Excel"}.`, metadata: { format, recordCount: users?.length ?? 0 } });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to download users.");
+    } finally { setDownloading(null); }
+  };
 
   const handleSendVerification = async (user: User) => {
     if (sending === user.id) return;
@@ -541,7 +564,21 @@ export default function UserManagementPage() {
         <Typography variant="h4" sx={{ fontWeight: 700, color: BRAND_NAVY }}>
           User Management
         </Typography>
-        <Button
+        <Box sx={{ display: "flex", gap: 1 }}>
+          <Button
+            variant="contained"
+            startIcon={<FileDownloadOutlinedIcon />}
+            disabled={downloading !== null}
+            onClick={(event) => setDownloadMenuAnchor(event.currentTarget)}
+            sx={{ background: "linear-gradient(135deg,#2A276E,#3F3B99)", px: 3, py: 1.2, borderRadius: 2.5, boxShadow: "0 8px 24px rgba(42,39,110,.25)", transition: "all .25s ease", "&:hover": { transform: "translateY(-2px)", boxShadow: "0 12px 30px rgba(42,39,110,.35)", background: "linear-gradient(135deg,#242162,#2A276E)" } }}
+          >
+            {downloading ? `${downloading.toUpperCase()}...` : "Download"}
+          </Button>
+          <Menu anchorEl={downloadMenuAnchor} open={Boolean(downloadMenuAnchor)} onClose={() => setDownloadMenuAnchor(null)}>
+            <MenuItem onClick={() => void handleDownload("pdf")}>Download PDF</MenuItem>
+            <MenuItem onClick={() => void handleDownload("xlsx")}>Download Excel</MenuItem>
+          </Menu>
+          <Button
           variant="contained"
           startIcon={<AddOutlinedIcon />}
           onClick={() => {
@@ -552,6 +589,7 @@ export default function UserManagementPage() {
         >
           Add User
         </Button>
+        </Box>
       </Box>
 
       {error && (

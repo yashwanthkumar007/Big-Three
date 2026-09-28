@@ -93,14 +93,19 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   );
 }
 
+let cachedSystemInfo: SystemInformation | null = null;
+
 export default function SystemSetupPage() {
   const navigate = useNavigate();
-  const [info, setInfo] = useState<SystemInformation | null>(null);
+  const [info, setInfo] = useState<SystemInformation | null>(cachedSystemInfo);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     getSystemInformation()
-      .then(setInfo)
+      .then((data) => {
+        cachedSystemInfo = data;
+        setInfo(data);
+      })
       .catch((err: Error) => setError(err.message));
   }, []);
 

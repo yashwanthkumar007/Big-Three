@@ -66,8 +66,17 @@ export default function DashboardPage() {
   const { data: inspections, isLoading } = useQuery({
     queryKey: ["inspections"],
     queryFn: () => fetchMyInspections(),
-    // Keep processing/completed statuses fresh on the dashboard.
-    refetchInterval: 15000,
+    // Reuse data briefly when returning to the dashboard, avoiding a blank
+    // loading state and duplicate request during quick navigation.
+    staleTime: 5_000,
+    // Keep processing/completed statuses fresh, but only poll while an
+    // inspection is still running or queued.
+    refetchInterval: (query) => {
+      const rows = query.state.data as InspectionMeta[] | undefined;
+      return rows?.some((inspection) => ["submitted", "processing"].includes(inspection.status))
+        ? 15_000
+        : false;
+    },
   });
 
   const openInspection = (inspection: InspectionMeta) => {

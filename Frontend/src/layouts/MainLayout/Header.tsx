@@ -264,7 +264,15 @@ export default function Header() {
           </Avatar>
 
           {/* Profile — clicking navigates directly to profile page */}
-          <Tooltip title="My Profile">
+          <Tooltip
+            title="My Profile"
+            slotProps={{
+              tooltip: {
+                sx: { bgcolor: "#2A276E", color: "#FFFFFF", fontWeight: 600 }
+              },
+              arrow: { sx: { color: "#2A276E" } }
+            }}
+          >
             <Button
               onClick={() => navigate("/profile")}
               sx={{
@@ -296,7 +304,15 @@ export default function Header() {
           {/* Admin (gear) shortcut — only visible to Tenant admin accounts,
               shown after the admin name */}
           {isAdmin && (
-            <Tooltip title="System Setup">
+            <Tooltip
+              title="System Setup"
+              slotProps={{
+                tooltip: {
+                  sx: { bgcolor: "#2A276E", color: "#FFFFFF", fontWeight: 600 }
+                },
+                arrow: { sx: { color: "#2A276E" } }
+              }}
+            >
               <IconButton
                 onClick={() => navigate("/settings/system")}
                 sx={{
