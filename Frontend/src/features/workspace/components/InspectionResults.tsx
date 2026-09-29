@@ -992,7 +992,7 @@ export default function InspectionResults({
           flexShrink: 0,
         }}
       >
-        {/* Difference Count */}
+        {/* Difference Count — solid dark-blue badge */}
 
         <Box
           sx={{
@@ -1000,16 +1000,29 @@ export default function InspectionResults({
             px: 1.2,
             display: "flex",
             alignItems: "center",
-            border: "1px solid #bfc5cc",
-            bgcolor: "#f7f8f9",
             mr: 1.2,
+
+            // Flat solid dark-blue count badge (no glassmorphism)
+            borderRadius: 2,
+            border: "1px solid #1B1B4B",
+            bgcolor: "#2A276E",
+            boxShadow: "0 2px 6px rgba(27, 27, 60, 0.25)",
+            transition: "all .25s ease",
+
+            "&:hover": {
+              bgcolor: "#232058",
+              boxShadow: "0 4px 12px rgba(27, 27, 60, 0.35)",
+              transform: "translateY(-1px)",
+            },
           }}
         >
           <Typography
             sx={{
               fontSize: 15,
               fontWeight: 700,
-              color: "#3f4650",
+              color: "#FFFFFF",
+              textShadow: "0 1px 2px rgba(0, 0, 0, 0.35)",
+              letterSpacing: 0.3,
             }}
           >
             {differenceCount}{" "}
