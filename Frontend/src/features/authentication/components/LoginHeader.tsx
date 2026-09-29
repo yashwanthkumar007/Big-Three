@@ -33,7 +33,7 @@ export default function LoginHeader() {
           variant="h5"
           sx={{ fontWeight: 800, color: '#070443', fontSize: '1.4rem' }}
         >
-          MedInspect AI
+          MedInspect
         </Typography>
       </Box>
 

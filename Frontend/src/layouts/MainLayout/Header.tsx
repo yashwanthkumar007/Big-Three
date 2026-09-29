@@ -125,10 +125,11 @@ export default function Header() {
       }}
     >
       <Toolbar sx={{ height: 72 }}>
-        {/* Left Section */}
+        {/* Left Section — spacing 0 so the logo and the "MedInspect"
+            wordmark sit flush with no gap between them. */}
         <Stack
           direction="row"
-          spacing={2}
+          spacing={0}
           sx={{ alignItems: "center" }}
         >
           <Box
@@ -337,7 +338,22 @@ export default function Header() {
           )}
 
           {/* FAQ */}
-          <Tooltip title="FAQ">
+          <Tooltip
+            title="FAQ"
+            slotProps={{
+              tooltip: {
+                sx: {
+                  bgcolor: "rgba(42, 39, 110, 0.92)",
+                  color: "#FFFFFF",
+                  fontWeight: 600,
+                  backdropFilter: "blur(10px)",
+                  WebkitBackdropFilter: "blur(10px)",
+                  border: "1px solid rgba(255, 255, 255, 0.25)",
+                },
+              },
+              arrow: { sx: { color: "#2A276E" } },
+            }}
+          >
             <IconButton
               onClick={() => navigate("/faq")}
               sx={{
@@ -347,11 +363,12 @@ export default function Header() {
 
                 bgcolor:
                   location.pathname === "/faq"
-                    ? "#703E97"
+                    ? "#2A276E"
                     : "transparent",
 
                 "&:hover": {
-                  bgcolor: "#703E97",
+                  bgcolor: "#2A276E",
+                  color: "#FFFFFF",
                   transform: "translateY(-2px)"
                 }
               }}
@@ -361,7 +378,22 @@ export default function Header() {
           </Tooltip>
 
           {/* Logout */}
-          <Tooltip title="Logout">
+          <Tooltip
+            title="Logout"
+            slotProps={{
+              tooltip: {
+                sx: {
+                  bgcolor: "rgba(42, 39, 110, 0.92)",
+                  color: "#FFFFFF",
+                  fontWeight: 600,
+                  backdropFilter: "blur(10px)",
+                  WebkitBackdropFilter: "blur(10px)",
+                  border: "1px solid rgba(255, 255, 255, 0.25)",
+                },
+              },
+              arrow: { sx: { color: "#2A276E" } },
+            }}
+          >
             <IconButton
               onClick={handleLogout}
               sx={{
@@ -370,7 +402,8 @@ export default function Header() {
                 transition: "all .25s ease",
 
                 "&:hover": {
-                  bgcolor: "#703E97",
+                  bgcolor: "#2A276E",
+                  color: "#FFFFFF",
                   transform: "translateY(-2px)"
                 }
               }}
