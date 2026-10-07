@@ -12,6 +12,7 @@ import {
   Button,
   Checkbox,
   CircularProgress,
+  Collapse,
   Dialog,
   DialogActions,
   DialogContent,
@@ -57,7 +58,10 @@ import ViewerPane from "./ViewerPane";
 import ReportOptionsDialog, {
   type ReportOptions,
 } from "./ReportOptionsDialog";
-import type { BoundingBox } from "@/shared/api/inspectionApi";
+import type {
+  BarcodeVerification,
+  BoundingBox,
+} from "@/shared/api/inspectionApi";
 import {
   cropInspect,
   shareInspectionReport,
@@ -113,6 +117,24 @@ export type InspectionDifference = {
   page?: number;
   masterBox?: BoundingBox | null;
   sampleBox?: BoundingBox | null;
+  barcodeType?: string | null;
+  decodedValue?: string | null;
+  grade?: string | null;
+  /**
+   * Heuristic verification block for a barcode finding.
+   *
+   * Present only for barcode inspections. The shared viewer uses it to render
+   * the barcode-specific hover card instead of the text-inspection
+   * Original/Sample template, which is meaningless for a barcode.
+   */
+  barcodeVerification?: BarcodeVerification | null;
+  /**
+   * Basis the finding's boxes are expressed in, e.g. `"pdf_points"`.
+   *
+   * Used by the development-only coordinate debug panel to prove which basis
+   * the viewer is mapping from.
+   */
+  coordinateSystem?: string | null;
 };
 
 export type CharacterDifference = {
@@ -344,6 +366,9 @@ type InspectionResultsProps = {
   sampleFile: File;
   selectedDifference?: InspectionDifference | null;
   onDifferenceSelect?: (difference: InspectionDifference | null) => void;
+  onRefreshInspection?: () => void;
+  isFullscreen?: boolean;
+  onToggleFullscreen?: () => void;
 };
 
 export default function InspectionResults({
@@ -352,6 +377,9 @@ export default function InspectionResults({
   sampleFile,
   selectedDifference,
   onDifferenceSelect,
+  onRefreshInspection,
+  isFullscreen = false,
+  onToggleFullscreen,
 }: InspectionResultsProps) {
   const [internalSelectedId, setInternalSelectedId] = useState<number | null>(
     null
@@ -359,34 +387,45 @@ export default function InspectionResults({
 
   const [selectedCharacterIndex, setSelectedCharacterIndex] = useState(0);
   const [lastDifferenceId, setLastDifferenceId] = useState<number | null>(null);
+  const [barcodeDetailsOpen, setBarcodeDetailsOpen] = useState(false);
+  const [barcodeFindingsOpen, setBarcodeFindingsOpen] = useState(false);
+  const isBarcode = result.inspectionType === "barcode";
 
   const characterStripRef = useRef<HTMLDivElement | null>(null);
   const selectedCharacterRef = useRef<HTMLDivElement | null>(null);
 
   const effectiveSelectedId =
-    selectedDifference?.id ?? internalSelectedId;
+    selectedDifference?.id ?? internalSelectedId ??
+    (result.inspectionType === "barcode" ? result.differences[0]?.id ?? null : null);
 
   const selectedDifferenceData =
     result.differences.find((difference) => difference.id === effectiveSelectedId) ??
     null;
 
-  const handleSelect = useCallback((difference: InspectionDifference) => {
-    // Toggle: clicking the already-selected difference deselects it so the
-    // PDF returns to its normal (zoomed-out) view.
-    if (effectiveSelectedId === difference.id) {
-      if (onDifferenceSelect) {
-        onDifferenceSelect(null);
-      } else {
-        setInternalSelectedId(null);
+  const handleSelect = useCallback(
+    (difference: InspectionDifference) => {
+      // Toggle: clicking the already-selected difference deselects it so the
+      // PDF returns to its normal (zoomed-out) view.
+      if (effectiveSelectedId === difference.id) {
+        setBarcodeDetailsOpen(false);
+        if (onDifferenceSelect) {
+          onDifferenceSelect(null);
+        } else {
+          setInternalSelectedId(null);
+        }
+        return;
       }
-      return;
-    }
-    if (onDifferenceSelect) {
-      onDifferenceSelect(difference);
-    } else {
-      setInternalSelectedId(difference.id);
-    }
-  }, [onDifferenceSelect, effectiveSelectedId]);
+      if (isBarcode) {
+        setBarcodeDetailsOpen(true);
+      }
+      if (onDifferenceSelect) {
+        onDifferenceSelect(difference);
+      } else {
+        setInternalSelectedId(difference.id);
+      }
+    },
+    [onDifferenceSelect, effectiveSelectedId, isBarcode]
+  );
 
   const differenceCount = result.totalDifferences;
 
@@ -971,1411 +1010,1511 @@ export default function InspectionResults({
     <Box
       sx={{
         width: "100%",
+        minHeight: "calc(100vh - 72px)",
+        height: "auto",
+        position: "relative",
         bgcolor: "#ffffff",
         display: "flex",
         flexDirection: "column",
-        minHeight: "calc(100vh - 72px)",
+        overflowX: "hidden",
+        overflowY: "visible",
+        gap: 1,
       }}
     >
       {/* =========================================================
           RESULT HEADER
          ========================================================= */}
 
-      <Box
-        sx={{
-          height: 52,
-          display: "flex",
-          alignItems: "center",
-          px: 1.5,
-          borderBottom: "1px solid #d5d9dd",
-          bgcolor: "#ffffff",
-          flexShrink: 0,
-        }}
-      >
-        {/* Difference Count — solid dark-blue badge */}
-
+      {isBarcode ? (
         <Box
           sx={{
-            height: 34,
-            px: 1.2,
+            height: 44,
+            minHeight: 44,
             display: "flex",
             alignItems: "center",
-            mr: 1.2,
-
-            // Flat solid dark-blue count badge (no glassmorphism)
-            borderRadius: 2,
-            border: "1px solid #1B1B4B",
-            bgcolor: "#2A276E",
-            boxShadow: "0 2px 6px rgba(27, 27, 60, 0.25)",
-            transition: "all .25s ease",
-
-            "&:hover": {
-              bgcolor: "#232058",
-              boxShadow: "0 4px 12px rgba(27, 27, 60, 0.35)",
-              transform: "translateY(-1px)",
-            },
+            gap: 1,
+            px: 1.5,
+            borderBottom: "1px solid #d5d9dd",
+            bgcolor: "#ffffff",
+            flexShrink: 0,
           }}
         >
-          <Typography
+          <Button
+            size="small"
+            variant={barcodeFindingsOpen ? "contained" : "outlined"}
+            onClick={() => setBarcodeFindingsOpen((open) => !open)}
             sx={{
-              fontSize: 15,
-              fontWeight: 700,
-              color: "#FFFFFF",
-              textShadow: "0 1px 2px rgba(0, 0, 0, 0.35)",
-              letterSpacing: 0.3,
+              minWidth: 58,
+              height: 32,
+              textTransform: "none",
+              color: barcodeFindingsOpen ? "#fff" : "#2A276E",
+              borderColor: "#2A276E",
+              bgcolor: barcodeFindingsOpen ? "#2A276E" : "transparent",
             }}
           >
-            {differenceCount}{" "}
-            {differenceCount === 1 ? "Difference" : "Differences"}
+            Start
+          </Button>
+          {/*
+            No second start control here. The only control that starts
+            Barcode Inspection is the blue "Inspect" button in the
+            Barcode Inspection configuration panel.
+          */}
+          <Typography
+            variant="body2"
+            noWrap
+            title={result.masterFileName}
+            sx={{ minWidth: 0, flex: 1, color: "#30343b" }}
+          >
+            <Box component="span" sx={{ fontWeight: 700 }}>Filename:</Box>{" "}
+            {truncateFileName(result.masterFileName, 34)}
           </Typography>
         </Box>
-
-        {/* Master */}
-
-        <Typography
+      ) : (
+        <Box
           sx={{
-            fontSize: 14,
-            fontWeight: 600,
-            color: "#515860",
-            mr: 0.5,
-            whiteSpace: "nowrap",
+            height: 52,
+            display: "flex",
+            alignItems: "center",
+            px: 1.5,
+            borderBottom: "1px solid #d5d9dd",
+            bgcolor: "#ffffff",
+            flexShrink: 0,
           }}
         >
-          Master:
-        </Typography>
+          {/* Difference Count — solid dark-blue badge */}
 
-        <Typography
-          sx={{
-            fontSize: 14,
-            color: "#5e646b",
-            maxWidth: 330,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            mr: "auto",
-          }}
-          title={result.masterFileName}
-        >
-          {truncateFileName(result.masterFileName)}
-        </Typography>
-
-        {/* Sample */}
-
-        <Typography
-          sx={{
-            fontSize: 14,
-            fontWeight: 600,
-            color: "#515860",
-            mr: 0.5,
-            whiteSpace: "nowrap",
-          }}
-        >
-          Sample:
-        </Typography>
-
-        <Typography
-          sx={{
-            fontSize: 14,
-            color: "#5e646b",
-            maxWidth: 330,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            mr: 1,
-          }}
-          title={result.sampleFileName}
-        >
-          {truncateFileName(result.sampleFileName)}
-        </Typography>
-
-        {/* Action Icons */}
-
-        <Divider
-          orientation="vertical"
-          flexItem
-          sx={{ mx: 1 }}
-        />
-
-        <Tooltip title="Share" arrow slotProps={DARK_BLUE_TOOLTIP_SLOT_PROPS}>
-          <IconButton
-            size="small"
-            onClick={handleShareOpen}
+          <Box
             sx={{
+              height: 34,
+              px: 1.2,
+              display: "flex",
+              alignItems: "center",
+              mr: 1.2,
+
+              // Flat solid dark-blue count badge (no glassmorphism)
+              borderRadius: 2,
+              border: "1px solid #1B1B4B",
               bgcolor: "#2A276E",
-              color: "#ffffff",
-              mx: 0.25,
+              boxShadow: "0 2px 6px rgba(27, 27, 60, 0.25)",
+              transition: "all .25s ease",
+
               "&:hover": {
-                bgcolor: "#1f1d57",
+                bgcolor: "#232058",
+                boxShadow: "0 4px 12px rgba(27, 27, 60, 0.35)",
+                transform: "translateY(-1px)",
               },
             }}
           >
-            <ShareIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
+            <Typography
+              sx={{
+                fontSize: 15,
+                fontWeight: 700,
+                color: "#FFFFFF",
+                textShadow: "0 1px 2px rgba(0, 0, 0, 0.35)",
+                letterSpacing: 0.3,
+              }}
+            >
+              {differenceCount}{" "}
+              {differenceCount === 1 ? "Difference" : "Differences"}
+            </Typography>
+          </Box>
 
-        <Tooltip title="Zoom" arrow slotProps={DARK_BLUE_TOOLTIP_SLOT_PROPS}>
-          <IconButton
-            size="small"
+          {/* Master */}
+
+          <Typography
             sx={{
-              bgcolor: "#2A276E",
-              color: "#ffffff",
-              mx: 0.25,
-              "&:hover": {
-                bgcolor: "#1f1d57",
-              },
+              fontSize: 14,
+              fontWeight: 600,
+              color: "#515860",
+              mr: 0.5,
+              whiteSpace: "nowrap",
             }}
           >
-            <ZoomInIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
+            Master:
+          </Typography>
 
-        <Tooltip title="Change the sample" arrow slotProps={DARK_BLUE_TOOLTIP_SLOT_PROPS}>
-          <IconButton
-            size="small"
+          <Typography
             sx={{
-              bgcolor: "#2A276E",
-              color: "#ffffff",
-              mx: 0.25,
-              "&:hover": {
-                bgcolor: "#1f1d57",
-              },
+              fontSize: 14,
+              color: "#5e646b",
+              maxWidth: 330,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              mr: "auto",
+            }}
+            title={result.masterFileName}
+          >
+            {truncateFileName(result.masterFileName)}
+          </Typography>
+
+          {/* Sample */}
+
+          <Typography
+            sx={{
+              fontSize: 14,
+              fontWeight: 600,
+              color: "#515860",
+              mr: 0.5,
+              whiteSpace: "nowrap",
             }}
           >
-            <SwapHorizIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
+            Sample:
+          </Typography>
 
-        <Tooltip title="Annotation list" arrow slotProps={DARK_BLUE_TOOLTIP_SLOT_PROPS}>
-          <IconButton
-            size="small"
+          <Typography
             sx={{
-              bgcolor: "#2A276E",
-              color: "#ffffff",
-              mx: 0.25,
-              "&:hover": {
-                bgcolor: "#1f1d57",
-              },
+              fontSize: 14,
+              color: "#5e646b",
+              maxWidth: 330,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              mr: 1,
             }}
+            title={result.sampleFileName}
           >
-            <FormatListBulletedIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
+            {truncateFileName(result.sampleFileName)}
+          </Typography>
 
-        <Tooltip title="Download the PDF report" arrow slotProps={DARK_BLUE_TOOLTIP_SLOT_PROPS}>
-          <IconButton
-            size="small"
-            onClick={handleDownloadClick}
-            sx={{
-              bgcolor: "#2A276E",
-              color: "#ffffff",
-              mx: 0.25,
-              "&:hover": {
-                bgcolor: "#1f1d57",
-              },
-            }}
-          >
-            <DownloadIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
+          {/* Action Icons */}
 
-        <Tooltip title="Open difference list" arrow slotProps={DARK_BLUE_TOOLTIP_SLOT_PROPS}>
-          <IconButton
-            size="small"
-            onClick={handleOpenDifferenceList}
-            sx={{
-              bgcolor: "#2A276E",
-              color: "#ffffff",
-              mx: 0.25,
-              "&:hover": {
-                bgcolor: "#1f1d57",
-              },
-            }}
-          >
-            <CompareIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
-      </Box>
+          <Divider
+            orientation="vertical"
+            flexItem
+            sx={{ mx: 1 }}
+          />
 
-      {/* =========================================================
-          RESULT TOOLBAR
-         ========================================================= */}
-
-      <Box
-        sx={{
-          height: 44,
-          display: "flex",
-          alignItems: "center",
-          px: 1,
-          borderBottom: "1px solid #d5d9dd",
-          bgcolor: "#f8f9fa",
-          flexShrink: 0,
-        }}
-      >
-        <IconButton size="small">
-          <GridViewOutlinedIcon fontSize="small" />
-        </IconButton>
-
-        <IconButton size="small">
-          <FilterAltOutlinedIcon fontSize="small" />
-        </IconButton>
-
-        <IconButton size="small">
-          <VisibilityOffOutlinedIcon fontSize="small" />
-        </IconButton>
-
-        <IconButton size="small">
-          <VisibilityOutlinedIcon fontSize="small" />
-        </IconButton>
-
-        <IconButton size="small">
-          <VisibilityOffTwoToneIcon fontSize="small" />
-        </IconButton>
-
-        {/* Crop Compare — drag a region on the Master page to re-inspect
-            just that region. Text inspection only (the crop pipeline is
-            the text comparison engine). */}
-        {result.inspectionType === "text" && (
-          <Tooltip
-            title={
-              cropMode
-                ? "Crop Compare ON — drag a rectangle on the Master page (click to turn off)"
-                : "Crop Compare — drag a rectangle on the Master page to inspect just that region"
-            }
-            arrow
-            slotProps={DARK_BLUE_TOOLTIP_SLOT_PROPS}
-          >
+          <Tooltip title="Share" arrow slotProps={DARK_BLUE_TOOLTIP_SLOT_PROPS}>
             <IconButton
               size="small"
-              onClick={handleToggleCropMode}
+              onClick={handleShareOpen}
               sx={{
-                bgcolor: cropMode ? "#6a1b9a" : "#2A276E",
+                bgcolor: "#2A276E",
                 color: "#ffffff",
                 mx: 0.25,
                 "&:hover": {
-                  bgcolor: cropMode ? "#4a148c" : "#1f1d57",
+                  bgcolor: "#1f1d57",
                 },
               }}
             >
-              <CropFreeIcon fontSize="small" />
+              <ShareIcon fontSize="small" />
             </IconButton>
           </Tooltip>
-        )}
 
-        <Box sx={{ flex: 1 }} />
-
-        <IconButton size="small">
-          <ArrowBackOutlinedIcon fontSize="small" />
-        </IconButton>
-
-        <IconButton size="small">
-          <ArrowForwardOutlinedIcon fontSize="small" />
-        </IconButton>
-      </Box>
-
-      {/* =========================================================
-          DIFFERENCE TABLE
-         ========================================================= */}
-
-      <TableContainer
-        component={Paper}
-        elevation={0}
-        sx={{
-          maxHeight: 250,
-          overflow: "auto",
-          flexShrink: 0,
-        }}
-      >
-        <Table
-          stickyHeader
-          size="small"
-          sx={{
-            minWidth: 1000,
-          }}
-        >
-          <TableHead>
-            <TableRow>
-              <TableCell
-                padding="checkbox"
-                sx={{
-                  bgcolor: "#f3f5f7",
-                  borderBottom: "1px solid #cdd2d7",
-                }}
-              >
-                <Checkbox size="small" />
-              </TableCell>
-
-              <TableCell
-                sx={{
-                  width: 60,
-                  bgcolor: "#f3f5f7",
-                  fontWeight: 700,
-                  color: "#50575e",
-                  borderBottom: "1px solid #cdd2d7",
-                }}
-              >
-                ID
-              </TableCell>
-
-              <TableCell
-                sx={{
-                  width: 220,
-                  bgcolor: "#f3f5f7",
-                  fontWeight: 700,
-                  color: "#50575e",
-                  borderBottom: "1px solid #cdd2d7",
-                }}
-              >
-                Type
-              </TableCell>
-
-              <TableCell
-                sx={{
-                  minWidth: 250,
-                  bgcolor: "#f3f5f7",
-                  fontWeight: 700,
-                  color: "#50575e",
-                  borderBottom: "1px solid #cdd2d7",
-                }}
-              >
-                Master
-              </TableCell>
-
-              <TableCell
-                sx={{
-                  minWidth: 250,
-                  bgcolor: "#f3f5f7",
-                  fontWeight: 700,
-                  color: "#50575e",
-                  borderBottom: "1px solid #cdd2d7",
-                }}
-              >
-                Sample
-              </TableCell>
-
-              <TableCell
-                sx={{
-                  width: 180,
-                  bgcolor: "#f3f5f7",
-                  fontWeight: 700,
-                  color: "#50575e",
-                  borderBottom: "1px solid #cdd2d7",
-                }}
-              >
-                Level
-              </TableCell>
-
-              <TableCell
-                sx={{
-                  width: 220,
-                  bgcolor: "#f3f5f7",
-                  fontWeight: 700,
-                  color: "#50575e",
-                  borderBottom: "1px solid #cdd2d7",
-                }}
-              >
-                Comment
-              </TableCell>
-            </TableRow>
-          </TableHead>
-
-          <TableBody>
-            {result.differences.map((difference) => {
-              const isSelected = effectiveSelectedId === difference.id;
-
-              return (
-                <TableRow
-                  key={difference.id}
-                  hover
-                  selected={isSelected}
-                  // NOTE: navigation is intentionally NOT on the row. Only
-                  // the ID / Master / Sample cells jump to the difference in
-                  // the PDF viewers below — clicking inside the Level or
-                  // Comment cells (to pick a level/comment) must never
-                  // redirect the viewers (user-experience bug fix).
-                  sx={{
-                    bgcolor: isSelected ? "rgba(42, 39, 110, 0.06)" : "transparent",
-
-                    "&:hover": {
-                      bgcolor: isSelected ? "rgba(42, 39, 110, 0.08)" : "#edf3ff",
-                    },
-                  }}
-                >
-                  <TableCell padding="checkbox">
-                    <Checkbox size="small" />
-                  </TableCell>
-
-                  <TableCell
-                    onClick={() => handleSelect(difference)}
-                    sx={{
-                      fontSize: 14,
-                      color: "#535a62",
-                      cursor: "pointer",
-                    }}
-                  >
-                    {difference.id}
-                  </TableCell>
-
-                  <TableCell
-                    onClick={() => handleSelect(difference)}
-                    sx={{
-                      fontSize: 14,
-                      color: "#535a62",
-                      cursor: "pointer",
-                    }}
-                  >
-                    {difference.type}
-                  </TableCell>
-
-                  <TableCell
-                    onClick={() => handleSelect(difference)}
-                    sx={{
-                      fontSize: 14,
-                      color: "#535a62",
-                      maxWidth: 300,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                      cursor: "pointer",
-                    }}
-                    title={difference.master}
-                  >
-                    {difference.master}
-                  </TableCell>
-
-                  <TableCell
-                    onClick={() => handleSelect(difference)}
-                    sx={{
-                      fontSize: 14,
-                      color: "#535a62",
-                      maxWidth: 300,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                      cursor: "pointer",
-                    }}
-                    title={difference.sample}
-                  >
-                    {difference.sample}
-                  </TableCell>
-
-                  <TableCell>
-                    <FormControl size="small" fullWidth>
-                      <Select
-                        value={getLevelValue(difference.id)}
-                        displayEmpty
-                        sx={{
-                          height: 30,
-                          fontSize: 13,
-                        }}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                        }}
-                        onChange={(event) => {
-                          handleLevelChange(
-                            difference.id,
-                            event.target.value as string
-                          );
-                        }}
-                      >
-                        <MenuItem value="">None</MenuItem>
-                        {configuredLevels
-                          .filter((option) => option !== "None")
-                          .map((option) => (
-                            <MenuItem key={option} value={option}>
-                              {option}
-                            </MenuItem>
-                          ))}
-                      </Select>
-                    </FormControl>
-                  </TableCell>
-
-                  <TableCell>
-                    {editingCommentId === difference.id ? (
-                      <TextField
-                        size="small"
-                        fullWidth
-                        autoFocus
-                        value={editingCommentText}
-                        onChange={(event) =>
-                          setEditingCommentText(event.target.value)
-                        }
-                        onBlur={() => handleSaveEdit(difference.id)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter") {
-                            event.preventDefault();
-                            handleSaveEdit(difference.id);
-                          } else if (event.key === "Escape") {
-                            setEditingCommentId(null);
-                            setEditingCommentText("");
-                          }
-                        }}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                        }}
-                        sx={{
-                          "& .MuiInputBase-root": {
-                            height: 30,
-                            fontSize: 13,
-                          },
-                        }}
-                      />
-                    ) : (
-                      <FormControl size="small" fullWidth>
-                        <Select
-                          value={getCommentValue(difference.id)}
-                          displayEmpty
-                          sx={{
-                            height: 30,
-                            fontSize: 13,
-                          }}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                          }}
-                          onDoubleClick={(event) => {
-                            event.stopPropagation();
-                            handleStartEdit(difference);
-                          }}
-                          onChange={(event) => {
-                            handleCommentChange(
-                              difference.id,
-                              event.target.value as string
-                            );
-                          }}
-                        >
-                          {configuredComments.map((option) => (
-                            <MenuItem key={option} value={option}>
-                              {option}
-                            </MenuItem>
-                          ))}
-
-                          {/* Persisted user comment (e.g. typed via
-                              double-click) that is not one of the configured
-                              options — render it so the Select value is
-                              always valid. */}
-                          {(() => {
-                            const current = getCommentValue(difference.id);
-                            if (
-                              current === "" ||
-                              current === "None" ||
-                              configuredComments.includes(current)
-                            ) {
-                              return null;
-                            }
-                            return (
-                              <MenuItem key={current} value={current}>
-                                {current}
-                              </MenuItem>
-                            );
-                          })()}
-
-                          {customComments.length > 0 && (
-                            <Divider sx={{ my: 0.5 }} />
-                          )}
-
-                          {customComments.map((comment, index) => (
-                            <MenuItem
-                              key={`${comment}-${index}`}
-                              value={comment}
-                            >
-                              {comment}
-                            </MenuItem>
-                          ))}
-                        </Select>
-                      </FormControl>
-                    )}
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-
-            {result.differences.length === 0 && (
-              <TableRow>
-                <TableCell
-                  colSpan={7}
-                  align="center"
-                  sx={{
-                    py: 4,
-                    color: "#69717a",
-                  }}
-                >
-                  <Typography
-                    variant="body2"
-                    sx={{
-                      fontWeight: 500,
-                    }}
-                  >
-                    No differences found
-                  </Typography>
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </TableContainer>
-
-      {/* =========================================================
-          SELECTED DIFFERENCE DETAILS
-         ========================================================= */}
-
-      {selectedDifferenceData && (
-        <Box
-          sx={{
-            borderTop: "1px solid #d5d9dd",
-            bgcolor: "#f8f9fa",
-            px: 2,
-            py: 1.5,
-            flexShrink: 0,
-          }}
-        >
-          <Box
-            sx={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              mb: 1,
-              gap: 2,
-            }}
-          >
-            <Typography
-              variant="subtitle1"
+          <Tooltip title="Zoom" arrow slotProps={DARK_BLUE_TOOLTIP_SLOT_PROPS}>
+            <IconButton
+              size="small"
               sx={{
-                fontWeight: 700,
-                color: "#2A276E",
+                bgcolor: "#2A276E",
+                color: "#ffffff",
+                mx: 0.25,
+                "&:hover": {
+                  bgcolor: "#1f1d57",
+                },
               }}
             >
-              Selected Difference
-            </Typography>
+              <ZoomInIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
 
-            <Typography
-              variant="body2"
+          <Tooltip title="Change the sample" arrow slotProps={DARK_BLUE_TOOLTIP_SLOT_PROPS}>
+            <IconButton
+              size="small"
               sx={{
-                color: "#50575e",
-                fontWeight: 600,
+                bgcolor: "#2A276E",
+                color: "#ffffff",
+                mx: 0.25,
+                "&:hover": {
+                  bgcolor: "#1f1d57",
+                },
               }}
             >
-              {selectedDifferenceData.type} — Page {selectedDifferenceData.page ?? 1}
-            </Typography>
-          </Box>
+              <SwapHorizIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
 
-          <Box
-            sx={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: 2,
-            }}
-          >
-            <Paper
-              elevation={0}
+          <Tooltip title="Annotation list" arrow slotProps={DARK_BLUE_TOOLTIP_SLOT_PROPS}>
+            <IconButton
+              size="small"
               sx={{
-                border: "1px solid #d5d9dd",
-                borderRadius: 1.5,
-                p: 1.5,
-                bgcolor: "#ffffff",
+                bgcolor: "#2A276E",
+                color: "#ffffff",
+                mx: 0.25,
+                "&:hover": {
+                  bgcolor: "#1f1d57",
+                },
               }}
             >
-              <Typography
-                variant="caption"
-                sx={{ fontWeight: 700, color: "#50575e" }}
-              >
-                Master value
-              </Typography>
-              <Typography sx={{ mt: 0.5, color: "#2f353c" }}>
-                {selectedDifferenceData.master || "—"}
-              </Typography>
-            </Paper>
+              <FormatListBulletedIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
 
-            <Paper
-              elevation={0}
+          <Tooltip title="Download the PDF report" arrow slotProps={DARK_BLUE_TOOLTIP_SLOT_PROPS}>
+            <IconButton
+              size="small"
+              onClick={handleDownloadClick}
               sx={{
-                border: "1px solid #d5d9dd",
-                borderRadius: 1.5,
-                p: 1.5,
-                bgcolor: "#ffffff",
+                bgcolor: "#2A276E",
+                color: "#ffffff",
+                mx: 0.25,
+                "&:hover": {
+                  bgcolor: "#1f1d57",
+                },
               }}
             >
-              <Typography
-                variant="caption"
-                sx={{ fontWeight: 700, color: "#50575e" }}
-              >
-                Sample value
-              </Typography>
-              <Typography sx={{ mt: 0.5, color: "#2f353c" }}>
-                {selectedDifferenceData.sample || "—"}
-              </Typography>
-            </Paper>
-          </Box>
+              <DownloadIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+
+          <Tooltip title="Open difference list" arrow slotProps={DARK_BLUE_TOOLTIP_SLOT_PROPS}>
+            <IconButton
+              size="small"
+              onClick={handleOpenDifferenceList}
+              sx={{
+                bgcolor: "#2A276E",
+                color: "#ffffff",
+                mx: 0.25,
+                "&:hover": {
+                  bgcolor: "#1f1d57",
+                },
+              }}
+            >
+              <CompareIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
         </Box>
       )}
 
-      {/* =========================================================
-          PDF VIEWERS
+      {!isBarcode && (
+        <>
+          {/* =========================================================
+          RESULT TOOLBAR
          ========================================================= */}
 
-      <Box
-        sx={{
-          flex: 1,
-          display: "flex",
-          bgcolor: "#f5f5f5",
-          overflow: "hidden",
-          minHeight: 0,
-          gap: selectedDifferenceData ? 2 : 0,
-        }}
-      >
-        <Box
-          sx={{
-            flex: 1,
-            overflow: "hidden",
-            minWidth: 0,
-          }}
-        >
-          <ViewerPane
-            title="Master Artwork"
-            file={masterFile}
-            inspectionType={result.inspectionType}
-            side="master"
-            selectedDifference={selectedDifferenceData}
-            naturalWidth={
-              result.pages?.find(
-                (p) => p.page === (selectedDifferenceData?.page ?? 0)
-              )?.masterWidth
-            }
-            naturalHeight={
-              result.pages?.find(
-                (p) => p.page === (selectedDifferenceData?.page ?? 0)
-              )?.masterHeight
-            }
-            cropMode={cropMode}
-            onCropComplete={handleCropComplete}
-          />
-        </Box>
-
-        <Box
-          sx={{
-            flex: 1,
-            overflow: "hidden",
-            minWidth: 0,
-          }}
-        >
-          <ViewerPane
-            title="Sample Artwork"
-            file={sampleFile}
-            inspectionType={result.inspectionType}
-            side="sample"
-            selectedDifference={selectedDifferenceData}
-            naturalWidth={
-              result.pages?.find(
-                (p) => p.page === (selectedDifferenceData?.page ?? 0)
-              )?.sampleWidth
-            }
-            naturalHeight={
-              result.pages?.find(
-                (p) => p.page === (selectedDifferenceData?.page ?? 0)
-              )?.sampleHeight
-            }
-          />
-        </Box>
-      </Box>
-
-      {/* =========================================================
-          CHARACTER DIFFERENCE PANEL (BOTTOM)
-         ========================================================= */}
-
-      {selectedDifferenceData && (
-        <Box
-          sx={{
-            borderTop: "1px solid #d5d9dd",
-            bgcolor: "#f8f9fa",
-            flexShrink: 0,
-            display: "flex",
-            alignItems: "center",
-            px: 1,
-            py: 1,
-            gap: 1,
-          }}
-        >
-          {/* Previous Difference */}
-          <IconButton
-            size="small"
-            disabled={currentDifferenceIndex <= 0}
-            onClick={handlePreviousDifference}
+          <Box
             sx={{
-              bgcolor: "#2A276E",
-              color: "#ffffff",
-              "&:hover": {
-                bgcolor: "#1f1d57",
-              },
-              "&.Mui-disabled": {
-                bgcolor: "#d9d9d9",
-                color: "#8a8a8a",
-              },
+              height: 44,
+              display: "flex",
+              alignItems: "center",
+              px: 1,
+              borderBottom: "1px solid #d5d9dd",
+              bgcolor: "#f8f9fa",
+              flexShrink: 0,
             }}
           >
-            <ChevronLeftIcon fontSize="small" />
-          </IconButton>
+            <IconButton size="small">
+              <GridViewOutlinedIcon fontSize="small" />
+            </IconButton>
+
+            <IconButton size="small">
+              <FilterAltOutlinedIcon fontSize="small" />
+            </IconButton>
+
+            <IconButton size="small">
+              <VisibilityOffOutlinedIcon fontSize="small" />
+            </IconButton>
+
+            <IconButton size="small">
+              <VisibilityOutlinedIcon fontSize="small" />
+            </IconButton>
+
+            <IconButton size="small">
+              <VisibilityOffTwoToneIcon fontSize="small" />
+            </IconButton>
+
+            {/* Crop Compare — drag a region on the Master page to re-inspect
+            just that region. Text inspection only (the crop pipeline is
+            the text comparison engine). */}
+            {result.inspectionType === "text" && (
+              <Tooltip
+                title={
+                  cropMode
+                    ? "Crop Compare ON — drag a rectangle on the Master page (click to turn off)"
+                    : "Crop Compare — drag a rectangle on the Master page to inspect just that region"
+                }
+                arrow
+                slotProps={DARK_BLUE_TOOLTIP_SLOT_PROPS}
+              >
+                <IconButton
+                  size="small"
+                  onClick={handleToggleCropMode}
+                  sx={{
+                    bgcolor: cropMode ? "#6a1b9a" : "#2A276E",
+                    color: "#ffffff",
+                    mx: 0.25,
+                    "&:hover": {
+                      bgcolor: cropMode ? "#4a148c" : "#1f1d57",
+                    },
+                  }}
+                >
+                  <CropFreeIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            )}
+
+            <Box sx={{ flex: 1 }} />
+
+            <IconButton size="small">
+              <ArrowBackOutlinedIcon fontSize="small" />
+            </IconButton>
+
+            <IconButton size="small">
+              <ArrowForwardOutlinedIcon fontSize="small" />
+            </IconButton>
+          </Box>
+
+          {/* =========================================================
+          DIFFERENCE TABLE
+         ========================================================= */}
+
+          <Collapse in={!isBarcode || barcodeDetailsOpen} unmountOnExit>
+            <TableContainer
+              component={Paper}
+              elevation={0}
+              sx={{
+                maxHeight: isBarcode ? 220 : 250,
+                overflow: "auto",
+                flexShrink: 0,
+              }}
+            >
+              <Table
+                stickyHeader
+                size="small"
+                sx={{
+                  minWidth: 1000,
+                }}
+              >
+                <TableHead>
+                  <TableRow>
+                    <TableCell
+                      padding="checkbox"
+                      sx={{
+                        bgcolor: "#f3f5f7",
+                        borderBottom: "1px solid #cdd2d7",
+                      }}
+                    >
+                      <Checkbox size="small" />
+                    </TableCell>
+
+                    <TableCell
+                      sx={{
+                        width: 60,
+                        bgcolor: "#f3f5f7",
+                        fontWeight: 700,
+                        color: "#50575e",
+                        borderBottom: "1px solid #cdd2d7",
+                      }}
+                    >
+                      ID
+                    </TableCell>
+
+                    <TableCell
+                      sx={{
+                        width: 220,
+                        bgcolor: "#f3f5f7",
+                        fontWeight: 700,
+                        color: "#50575e",
+                        borderBottom: "1px solid #cdd2d7",
+                      }}
+                    >
+                      Type
+                    </TableCell>
+
+                    <TableCell
+                      sx={{
+                        minWidth: 250,
+                        bgcolor: "#f3f5f7",
+                        fontWeight: 700,
+                        color: "#50575e",
+                        borderBottom: "1px solid #cdd2d7",
+                      }}
+                    >
+                      Master
+                    </TableCell>
+
+                    <TableCell
+                      sx={{
+                        minWidth: 250,
+                        bgcolor: "#f3f5f7",
+                        fontWeight: 700,
+                        color: "#50575e",
+                        borderBottom: "1px solid #cdd2d7",
+                      }}
+                    >
+                      Sample
+                    </TableCell>
+
+                    <TableCell
+                      sx={{
+                        width: 180,
+                        bgcolor: "#f3f5f7",
+                        fontWeight: 700,
+                        color: "#50575e",
+                        borderBottom: "1px solid #cdd2d7",
+                      }}
+                    >
+                      Level
+                    </TableCell>
+
+                    <TableCell
+                      sx={{
+                        width: 220,
+                        bgcolor: "#f3f5f7",
+                        fontWeight: 700,
+                        color: "#50575e",
+                        borderBottom: "1px solid #cdd2d7",
+                      }}
+                    >
+                      Comment
+                    </TableCell>
+                  </TableRow>
+                </TableHead>
+
+                <TableBody>
+                  {result.differences.map((difference) => {
+                    const isSelected = effectiveSelectedId === difference.id;
+
+                    return (
+                      <TableRow
+                        key={difference.id}
+                        hover
+                        selected={isSelected}
+                        // NOTE: navigation is intentionally NOT on the row. Only
+                        // the ID / Master / Sample cells jump to the difference in
+                        // the PDF viewers below — clicking inside the Level or
+                        // Comment cells (to pick a level/comment) must never
+                        // redirect the viewers (user-experience bug fix).
+                        sx={{
+                          bgcolor: isSelected ? "rgba(42, 39, 110, 0.06)" : "transparent",
+
+                          "&:hover": {
+                            bgcolor: isSelected ? "rgba(42, 39, 110, 0.08)" : "#edf3ff",
+                          },
+                        }}
+                      >
+                        <TableCell padding="checkbox">
+                          <Checkbox size="small" />
+                        </TableCell>
+
+                        <TableCell
+                          onClick={() => handleSelect(difference)}
+                          sx={{
+                            fontSize: 14,
+                            color: "#535a62",
+                            cursor: "pointer",
+                          }}
+                        >
+                          {difference.id}
+                        </TableCell>
+
+                        <TableCell
+                          onClick={() => handleSelect(difference)}
+                          sx={{
+                            fontSize: 14,
+                            color: "#535a62",
+                            cursor: "pointer",
+                          }}
+                        >
+                          {difference.type}
+                        </TableCell>
+
+                        <TableCell
+                          onClick={() => handleSelect(difference)}
+                          sx={{
+                            fontSize: 14,
+                            color: "#535a62",
+                            maxWidth: 300,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                            cursor: "pointer",
+                          }}
+                          title={difference.master}
+                        >
+                          {difference.master}
+                        </TableCell>
+
+                        <TableCell
+                          onClick={() => handleSelect(difference)}
+                          sx={{
+                            fontSize: 14,
+                            color: "#535a62",
+                            maxWidth: 300,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                            cursor: "pointer",
+                          }}
+                          title={difference.sample}
+                        >
+                          {difference.sample}
+                        </TableCell>
+
+                        <TableCell>
+                          <FormControl size="small" fullWidth>
+                            <Select
+                              value={getLevelValue(difference.id)}
+                              displayEmpty
+                              sx={{
+                                height: 30,
+                                fontSize: 13,
+                              }}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                              }}
+                              onChange={(event) => {
+                                handleLevelChange(
+                                  difference.id,
+                                  event.target.value as string
+                                );
+                              }}
+                            >
+                              <MenuItem value="">None</MenuItem>
+                              {configuredLevels
+                                .filter((option) => option !== "None")
+                                .map((option) => (
+                                  <MenuItem key={option} value={option}>
+                                    {option}
+                                  </MenuItem>
+                                ))}
+                            </Select>
+                          </FormControl>
+                        </TableCell>
+
+                        <TableCell>
+                          {editingCommentId === difference.id ? (
+                            <TextField
+                              size="small"
+                              fullWidth
+                              autoFocus
+                              value={editingCommentText}
+                              onChange={(event) =>
+                                setEditingCommentText(event.target.value)
+                              }
+                              onBlur={() => handleSaveEdit(difference.id)}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") {
+                                  event.preventDefault();
+                                  handleSaveEdit(difference.id);
+                                } else if (event.key === "Escape") {
+                                  setEditingCommentId(null);
+                                  setEditingCommentText("");
+                                }
+                              }}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                              }}
+                              sx={{
+                                "& .MuiInputBase-root": {
+                                  height: 30,
+                                  fontSize: 13,
+                                },
+                              }}
+                            />
+                          ) : (
+                            <FormControl size="small" fullWidth>
+                              <Select
+                                value={getCommentValue(difference.id)}
+                                displayEmpty
+                                sx={{
+                                  height: 30,
+                                  fontSize: 13,
+                                }}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                }}
+                                onDoubleClick={(event) => {
+                                  event.stopPropagation();
+                                  handleStartEdit(difference);
+                                }}
+                                onChange={(event) => {
+                                  handleCommentChange(
+                                    difference.id,
+                                    event.target.value as string
+                                  );
+                                }}
+                              >
+                                {configuredComments.map((option) => (
+                                  <MenuItem key={option} value={option}>
+                                    {option}
+                                  </MenuItem>
+                                ))}
+
+                                {/* Persisted user comment (e.g. typed via
+                                    double-click) that is not one of the configured
+                                    options — render it so the Select value is
+                                    always valid. */}
+                                {(() => {
+                                  const current = getCommentValue(difference.id);
+                                  if (
+                                    current === "" ||
+                                    current === "None" ||
+                                    configuredComments.includes(current)
+                                  ) {
+                                    return null;
+                                  }
+                                  return (
+                                    <MenuItem key={current} value={current}>
+                                      {current}
+                                    </MenuItem>
+                                  );
+                                })()}
+
+                                {customComments.length > 0 && (
+                                  <Divider sx={{ my: 0.5 }} />
+                                )}
+
+                                {customComments.map((comment, index) => (
+                                  <MenuItem
+                                    key={`${comment}-${index}`}
+                                    value={comment}
+                                  >
+                                    {comment}
+                                  </MenuItem>
+                                ))}
+                              </Select>
+                            </FormControl>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+
+                  {result.differences.length === 0 && (
+                    <TableRow>
+                      <TableCell
+                        colSpan={7}
+                        align="center"
+                        sx={{
+                          py: 4,
+                          color: "#69717a",
+                        }}
+                      >
+                        <Typography
+                          variant="body2"
+                          sx={{
+                            fontWeight: 500,
+                          }}
+                        >
+                          No differences found
+                        </Typography>
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </Collapse>
+
+          {/* =========================================================
+          SELECTED DIFFERENCE DETAILS
+         ========================================================= */}
+
+          {selectedDifferenceData && (!isBarcode || barcodeDetailsOpen) && (
+            <Box
+              sx={{
+                border: "1px solid #d5d9dd",
+                bgcolor: "#f8f9fa",
+                px: 2,
+                py: 1.5,
+                flexShrink: 0,
+                ...(isBarcode
+                  ? {
+                      position: "absolute",
+                      left: 16,
+                      bottom: 56,
+                      zIndex: 40,
+                      width: "min(680px, calc(100% - 32px))",
+                      maxHeight: "45%",
+                      overflow: "auto",
+                      boxShadow: "0 8px 24px rgba(0,0,0,0.2)",
+                      borderRadius: 1.5,
+                    }
+                  : {}),
+              }}
+            >
+              <Box
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  mb: 1,
+                  gap: 2,
+                }}
+              >
+                <Typography
+                  variant="subtitle1"
+                  sx={{
+                    fontWeight: 700,
+                    color: "#2A276E",
+                  }}
+                >
+                  Selected Difference
+                </Typography>
+                {isBarcode && (
+                  <IconButton size="small" onClick={() => setBarcodeDetailsOpen(false)} aria-label="Close barcode details">
+                    <CloseIcon fontSize="small" />
+                  </IconButton>
+                )}
+              </Box>
+
+              <Box
+                sx={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: 2,
+                }}
+              >
+                <Paper
+                  elevation={0}
+                  sx={{
+                    border: "1px solid #d5d9dd",
+                    borderRadius: 1.5,
+                    p: 1.5,
+                    bgcolor: "#ffffff",
+                  }}
+                >
+                  <Typography
+                    variant="caption"
+                    sx={{ fontWeight: 700, color: "#50575e" }}
+                  >
+                    {selectedDifferenceData.type === "Barcode" ? "Decoded value" : "Master value"}
+                  </Typography>
+                  <Typography sx={{ mt: 0.5, color: "#2f353c" }}>
+                    {selectedDifferenceData.type === "Barcode"
+                      ? (selectedDifferenceData.decodedValue ?? selectedDifferenceData.master ?? "—")
+                      : (selectedDifferenceData.master || "—")}
+                  </Typography>
+                </Paper>
+
+                <Paper
+                  elevation={0}
+                  sx={{
+                    border: "1px solid #d5d9dd",
+                    borderRadius: 1.5,
+                    p: 1.5,
+                    bgcolor: "#ffffff",
+                  }}
+                >
+                  <Typography
+                    variant="caption"
+                    sx={{ fontWeight: 700, color: "#50575e" }}
+                  >
+                    {selectedDifferenceData.type === "Barcode" ? "Detected value" : "Sample value"}
+                  </Typography>
+                  <Typography sx={{ mt: 0.5, color: "#2f353c" }}>
+                    {selectedDifferenceData.type === "Barcode"
+                      ? (selectedDifferenceData.sample || selectedDifferenceData.decodedValue || "—")
+                      : (selectedDifferenceData.sample || "—")}
+                  </Typography>
+                </Paper>
+              </Box>
+
+              {selectedDifferenceData.type === "Barcode" && (
+                <Box
+                  sx={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr 1fr",
+                    gap: 2,
+                    mt: 2,
+                  }}
+                >
+                  <Paper
+                    elevation={0}
+                    sx={{
+                      border: "1px solid #d5d9dd",
+                      borderRadius: 1.5,
+                      p: 1.5,
+                      bgcolor: "#ffffff",
+                    }}
+                  >
+                    <Typography
+                      variant="caption"
+                      sx={{ fontWeight: 700, color: "#50575e" }}
+                    >
+                      Type
+                    </Typography>
+                    <Typography sx={{ mt: 0.5, color: "#2f353c" }}>
+                      {selectedDifferenceData.barcodeType ?? "Unknown"}
+                    </Typography>
+                  </Paper>
+                  <Paper
+                    elevation={0}
+                    sx={{
+                      border: "1px solid #d5d9dd",
+                      borderRadius: 1.5,
+                      p: 1.5,
+                      bgcolor: "#ffffff",
+                    }}
+                  >
+                    <Typography
+                      variant="caption"
+                      sx={{ fontWeight: 700, color: "#50575e" }}
+                    >
+                      Decoded Value
+                    </Typography>
+                    <Typography sx={{ mt: 0.5, color: "#2f353c" }}>
+                      {selectedDifferenceData.decodedValue ?? selectedDifferenceData.sample ?? "—"}
+                    </Typography>
+                  </Paper>
+                  <Paper
+                    elevation={0}
+                    sx={{
+                      border: "1px solid #d5d9dd",
+                      borderRadius: 1.5,
+                      p: 1.5,
+                      bgcolor: "#ffffff",
+                    }}
+                  >
+                    <Typography
+                      variant="caption"
+                      sx={{ fontWeight: 700, color: "#50575e" }}
+                    >
+                      Grade
+                    </Typography>
+                    <Typography sx={{ mt: 0.5, color: "#2f353c" }}>
+                      {selectedDifferenceData.grade ?? "—"}
+                    </Typography>
+                  </Paper>
+                </Box>
+              )}
+            </Box>
+          )}
+
+          {/* =========================================================
+          PDF VIEWERS
+         ========================================================= */}
 
           <Box
             sx={{
               flex: 1,
-              minWidth: 0,
               display: "flex",
-              flexDirection: "column",
-              gap: 0.5,
+              bgcolor: "#f5f5f5",
+              overflow: "hidden",
+              minHeight: 0,
+              gap: !isBarcode && selectedDifferenceData ? 2 : 0,
             }}
           >
-            <Box
-              sx={{
-                display: "flex",
-                alignItems: "center",
-                gap: 1,
-                px: 0.5,
-              }}
-            >
-              <Typography
-                variant="caption"
-                sx={{
-                  fontWeight: 700,
-                  color: "#2A276E",
-                }}
-              >
-                Character Difference
-              </Typography>
-
-              <Typography
-                variant="caption"
-                sx={{
-                  fontWeight: 600,
-                  color: "#50575e",
-                }}
-              >
-                Difference {selectedDifferenceData.id} / {result.differences.length}
-              </Typography>
+            <Box sx={{ flex: 1, overflow: "hidden", minWidth: 0 }}>
+              <ViewerPane
+                title={isBarcode ? "" : "Master Artwork"}
+                file={masterFile}
+                inspectionType={result.inspectionType}
+                side="master"
+                selectedDifference={selectedDifferenceData}
+                hideHeader={isBarcode}
+                compactViewer={isBarcode}
+                onOverlayClick={() => setBarcodeDetailsOpen(true)}
+                onToggleSidebar={isBarcode ? () => setBarcodeFindingsOpen((open) => !open) : undefined}
+                sidebarOpen={barcodeFindingsOpen}
+                onDocumentAction={isBarcode ? () => setBarcodeFindingsOpen(true) : undefined}
+                onComments={isBarcode ? () => setBarcodeFindingsOpen(true) : undefined}
+                onRefresh={isBarcode ? onRefreshInspection : undefined}
+                isFullscreen={isFullscreen}
+                onToggleFullscreen={isBarcode ? onToggleFullscreen : undefined}
+                naturalWidth={
+                  result.pages?.find(
+                    (p) => p.page === (selectedDifferenceData?.page ?? 0)
+                  )?.masterWidth
+                }
+                naturalHeight={
+                  result.pages?.find(
+                    (p) => p.page === (selectedDifferenceData?.page ?? 0)
+                  )?.masterHeight
+                }
+                cropMode={cropMode}
+                onCropComplete={handleCropComplete}
+              />
             </Box>
-
-            <Box
-              ref={characterStripRef}
-              sx={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 0.5,
-                overflowX: "auto",
-                overflowY: "hidden",
-                pb: 0.5,
-              }}
-            >
-              {/* Master Row */}
-              <Box
-                sx={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 0.25,
-                }}
-              >
-                <Typography
-                  variant="caption"
-                  sx={{
-                    fontWeight: 600,
-                    color: "#50575e",
-                    minWidth: 48,
-                    flexShrink: 0,
-                  }}
-                >
-                  Master
-                </Typography>
-
-                {characterDifferences.map((item) => {
-                  const isSelected = item.index === selectedCharacterIndex;
-                  const isEmpty = item.masterChar === "";
-
-                  return (
-                    <Box
-                      key={`m-${item.index}`}
-                      ref={isSelected ? selectedCharacterRef : null}
-                      onClick={() => setSelectedCharacterIndex(item.index)}
-                      sx={{
-  minWidth: 22,
-  height: 24,
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  border: "1px solid #cdd2d7",
-  borderRadius: 0.5,
-  fontSize: 12,
-  fontFamily: "monospace",
-  cursor: "pointer",
-  userSelect: "none",
-  flexShrink: 0,
-  position: "relative",
-  zIndex: isSelected ? 2 : 1,
-
-  bgcolor:
-    item.type === "change" || item.type === "deletion"
-      ? "#fde8e8"
-      : "#ffffff",
-
-  borderColor: isSelected
-    ? "#2A276E"
-    : item.type === "change" || item.type === "deletion"
-    ? "#e57373"
-    : "#cdd2d7",
-
-  boxShadow: isSelected
-    ? "0 0 0 2px #2A276E, 0 0 0 4px rgba(42, 39, 110, 0.25)"
-    : item.type === "change" || item.type === "deletion"
-    ? "0 0 0 2px #e53935"
-    : "none",
-
-  color: "#2f353c",
-
-  transition:
-    "box-shadow 0.15s ease, border-color 0.15s ease, transform 0.15s ease",
-}}
-                    >
-                      {isEmpty ? "" : item.masterChar === " " ? "·" : item.masterChar}
-                    </Box>
-                  );
-                })}
-
-                {/* Filler boxes to fill remaining width */}
-                {Array.from({ length: 8 }).map((_, i) => (
-                  <Box
-                    key={`mf-${i}`}
-                    sx={{
-                      flex: 1,
-                      minWidth: 22,
-                      height: 24,
-                      border: "1px dashed #e0e0e0",
-                      borderRadius: 0.5,
-                      flexShrink: 0,
-                    }}
-                  />
-                ))}
+            {!isBarcode && (
+              <Box sx={{ flex: 1, overflow: "hidden", minWidth: 0 }}>
+                <ViewerPane
+                  title="Sample Artwork"
+                  file={sampleFile}
+                  inspectionType={result.inspectionType}
+                  side="sample"
+                  selectedDifference={selectedDifferenceData}
+                  naturalWidth={
+                    result.pages?.find(
+                      (p) => p.page === (selectedDifferenceData?.page ?? 0)
+                    )?.sampleWidth
+                  }
+                  naturalHeight={
+                    result.pages?.find(
+                      (p) => p.page === (selectedDifferenceData?.page ?? 0)
+                    )?.sampleHeight
+                  }
+                />
               </Box>
-
-              {/* Sample Row */}
-              <Box
-                sx={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 0.25,
-                }}
-              >
-                <Typography
-                  variant="caption"
-                  sx={{
-                    fontWeight: 600,
-                    color: "#50575e",
-                    minWidth: 48,
-                    flexShrink: 0,
-                  }}
-                >
-                  Sample
-                </Typography>
-
-                {characterDifferences.map((item) => {
-                  const isSelected = item.index === selectedCharacterIndex;
-                  const isEmpty = item.sampleChar === "";
-
-                  return (
-                    <Box
-                      key={`s-${item.index}`}
-                      onClick={() => setSelectedCharacterIndex(item.index)}
-                      sx={{
-  minWidth: 22,
-  height: 24,
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  border: "1px solid #cdd2d7",
-  borderRadius: 0.5,
-  fontSize: 12,
-  fontFamily: "monospace",
-  cursor: "pointer",
-  userSelect: "none",
-  flexShrink: 0,
-  position: "relative",
-  zIndex: isSelected ? 2 : 1,
-
-  bgcolor:
-    item.type === "change" || item.type === "insertion"
-      ? "#fde8e8"
-      : "#ffffff",
-
-  borderColor: isSelected
-    ? "#2A276E"
-    : item.type === "change" || item.type === "insertion"
-    ? "#e57373"
-    : "#cdd2d7",
-
-  boxShadow: isSelected
-    ? "0 0 0 2px #2A276E, 0 0 0 4px rgba(42, 39, 110, 0.25)"
-    : item.type === "change" || item.type === "insertion"
-    ? "0 0 0 2px #e53935"
-    : "none",
- 
-  color: "#2f353c",
-
-  transition:
-    "box-shadow 0.15s ease, border-color 0.15s ease, transform 0.15s ease",
-}}
-                    >
-                      {isEmpty ? "" : item.sampleChar === " " ? "·" : item.sampleChar}
-                    </Box>
-                  );
-                })}
-
-                {/* Filler boxes to fill remaining width */}
-                {Array.from({ length: 8 }).map((_, i) => (
-                  <Box
-                    key={`sf-${i}`}
-                    sx={{
-                      flex: 1,
-                      minWidth: 22,
-                      height: 24,
-                      border: "1px dashed #e0e0e0",
-                      borderRadius: 0.5,
-                      flexShrink: 0,
-                    }}
-                  />
-                ))}
-              </Box>
-            </Box>
+            )}
           </Box>
 
-          {/* Next Difference */}
-          <IconButton
-            size="small"
-            disabled={
-              currentDifferenceIndex < 0 ||
-              currentDifferenceIndex >= result.differences.length - 1
-            }
-            onClick={handleNextDifference}
-            sx={{
-              bgcolor: "#2A276E",
-              color: "#ffffff",
-              "&:hover": {
-                bgcolor: "#1f1d57",
-              },
-              "&.Mui-disabled": {
-                bgcolor: "#d9d9d9",
-                color: "#8a8a8a",
-              },
-            }}
-          >
-            <ChevronRightIcon fontSize="small" />
-          </IconButton>
-        </Box>
-      )}
+          {/* =========================================================
+          CHARACTER DIFFERENCE PANEL (BOTTOM)
+         ========================================================= */}
 
-      {/* =========================================================
+          {selectedDifferenceData && (
+            <Box
+              sx={{
+                borderTop: "1px solid #d5d9dd",
+                bgcolor: "#f8f9fa",
+                flexShrink: 0,
+                display: "flex",
+                alignItems: "center",
+                px: 1,
+                py: 1,
+                gap: 1,
+              }}
+            >
+              {/* Previous Difference */}
+              <IconButton
+                size="small"
+                disabled={currentDifferenceIndex <= 0}
+                onClick={handlePreviousDifference}
+                sx={{
+                  bgcolor: "#2A276E",
+                  color: "#ffffff",
+                  "&:hover": {
+                    bgcolor: "#1f1d57",
+                  },
+                  "&.Mui-disabled": {
+                    bgcolor: "#d9d9d9",
+                    color: "#8a8a8a",
+                  },
+                }}
+              >
+                <ChevronLeftIcon fontSize="small" />
+              </IconButton>
+
+              <Box
+                sx={{
+                  flex: 1,
+                  minWidth: 0,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 0.5,
+                }}
+              >
+                <Box
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 1,
+                    px: 0.5,
+                  }}
+                >
+                  <Typography
+                    variant="caption"
+                    sx={{
+                      fontWeight: 700,
+                      color: "#2A276E",
+                    }}
+                  >
+                    Character Difference
+                  </Typography>
+
+                  <Typography
+                    variant="caption"
+                    sx={{
+                      fontWeight: 600,
+                      color: "#50575e",
+                    }}
+                  >
+                    Difference {selectedDifferenceData.id} / {result.differences.length}
+                  </Typography>
+                </Box>
+
+                <Box
+                  ref={characterStripRef}
+                  sx={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 0.5,
+                    overflowX: "auto",
+                    overflowY: "hidden",
+                    pb: 0.5,
+                  }}
+                >
+                  {/* Master Row */}
+                  <Box
+                    sx={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 0.25,
+                    }}
+                  >
+                    <Typography
+                      variant="caption"
+                      sx={{
+                        fontWeight: 600,
+                        color: "#50575e",
+                        minWidth: 48,
+                        flexShrink: 0,
+                      }}
+                    >
+                      Master
+                    </Typography>
+
+                    {characterDifferences.map((item) => {
+                      const isSelected = item.index === selectedCharacterIndex;
+                      const isEmpty = item.masterChar === "";
+
+                      return (
+                        <Box
+                          key={`m-${item.index}`}
+                          ref={isSelected ? selectedCharacterRef : null}
+                          onClick={() => setSelectedCharacterIndex(item.index)}
+                          sx={{
+                            minWidth: 22,
+                            height: 24,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            border: "1px solid #cdd2d7",
+                            borderRadius: 0.5,
+                            fontSize: 12,
+                            fontFamily: "monospace",
+                            cursor: "pointer",
+                            userSelect: "none",
+                            flexShrink: 0,
+                            position: "relative",
+                            zIndex: isSelected ? 2 : 1,
+
+                            bgcolor:
+                              item.type === "change" || item.type === "deletion"
+                                ? "#fde8e8"
+                                : "#ffffff",
+
+                            borderColor: isSelected
+                              ? "#2A276E"
+                              : item.type === "change" || item.type === "deletion"
+                              ? "#e57373"
+                              : "#cdd2d7",
+
+                            boxShadow: isSelected
+                              ? "0 0 0 2px #2A276E, 0 0 0 4px rgba(42, 39, 110, 0.25)"
+                              : item.type === "change" || item.type === "deletion"
+                              ? "0 0 0 2px #e53935"
+                              : "none",
+
+                            color: "#2f353c",
+
+                            transition:
+                              "box-shadow 0.15s ease, border-color 0.15s ease, transform 0.15s ease",
+                          }}
+                        >
+                          {isEmpty ? "" : item.masterChar === " " ? "·" : item.masterChar}
+                        </Box>
+                      );
+                    })}
+
+                    {/* Filler boxes to fill remaining width */}
+                    {Array.from({ length: 8 }).map((_, i) => (
+                      <Box
+                        key={`mf-${i}`}
+                        sx={{
+                          flex: 1,
+                          minWidth: 22,
+                          height: 24,
+                          border: "1px dashed #e0e0e0",
+                          borderRadius: 0.5,
+                          flexShrink: 0,
+                        }}
+                      />
+                    ))}
+                  </Box>
+
+                  {/* Sample Row */}
+                  <Box
+                    sx={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 0.25,
+                    }}
+                  >
+                    <Typography
+                      variant="caption"
+                      sx={{
+                        fontWeight: 600,
+                        color: "#50575e",
+                        minWidth: 48,
+                        flexShrink: 0,
+                      }}
+                    >
+                      Sample
+                    </Typography>
+
+                    {characterDifferences.map((item) => {
+                      const isSelected = item.index === selectedCharacterIndex;
+                      const isEmpty = item.sampleChar === "";
+
+                      return (
+                        <Box
+                          key={`s-${item.index}`}
+                          onClick={() => setSelectedCharacterIndex(item.index)}
+                          sx={{
+                            minWidth: 22,
+                            height: 24,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            border: "1px solid #cdd2d7",
+                            borderRadius: 0.5,
+                            fontSize: 12,
+                            fontFamily: "monospace",
+                            cursor: "pointer",
+                            userSelect: "none",
+                            flexShrink: 0,
+                            position: "relative",
+                            zIndex: isSelected ? 2 : 1,
+
+                            bgcolor:
+                              item.type === "change" || item.type === "insertion"
+                                ? "#fde8e8"
+                                : "#ffffff",
+
+                            borderColor: isSelected
+                              ? "#2A276E"
+                              : item.type === "change" || item.type === "insertion"
+                              ? "#e57373"
+                              : "#cdd2d7",
+
+                            boxShadow: isSelected
+                              ? "0 0 0 2px #2A276E, 0 0 0 4px rgba(42, 39, 110, 0.25)"
+                              : item.type === "change" || item.type === "insertion"
+                              ? "0 0 0 2px #e53935"
+                              : "none",
+
+                            color: "#2f353c",
+
+                            transition:
+                              "box-shadow 0.15s ease, border-color 0.15s ease, transform 0.15s ease",
+                          }}
+                        >
+                          {isEmpty ? "" : item.sampleChar === " " ? "·" : item.sampleChar}
+                        </Box>
+                      );
+                    })}
+
+                    {/* Filler boxes to fill remaining width */}
+                    {Array.from({ length: 8 }).map((_, i) => (
+                      <Box
+                        key={`sf-${i}`}
+                        sx={{
+                          flex: 1,
+                          minWidth: 22,
+                          height: 24,
+                          border: "1px dashed #e0e0e0",
+                          borderRadius: 0.5,
+                          flexShrink: 0,
+                        }}
+                      />
+                    ))}
+                  </Box>
+                </Box>
+
+                {/* Next Difference */}
+                <IconButton
+                  size="small"
+                  disabled={
+                    currentDifferenceIndex < 0 ||
+                    currentDifferenceIndex >= result.differences.length - 1
+                  }
+                  onClick={handleNextDifference}
+                  sx={{
+                    bgcolor: "#2A276E",
+                    color: "#ffffff",
+                    "&:hover": {
+                      bgcolor: "#1f1d57",
+                    },
+                    "&.Mui-disabled": {
+                      bgcolor: "#d9d9d9",
+                      color: "#8a8a8a",
+                    },
+                  }}
+                >
+                  <ChevronRightIcon fontSize="small" />
+                </IconButton>
+              </Box>
+            </Box>
+          )}
+
+          {/* =========================================================
           SHARE REPORT DIALOG
          ========================================================= */}
 
-      <Dialog
-        open={shareOpen}
-        onClose={handleShareClose}
-        maxWidth="xs"
-        fullWidth
-      >
-        <DialogTitle
-          sx={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            fontWeight: 700,
-            color: "#2A276E",
-          }}
-        >
-          File share
-          <IconButton
-            size="small"
-            onClick={handleShareClose}
-            disabled={shareLoading}
-            sx={{
-              color: "#50575e",
-              "&:hover": {
-                bgcolor: "rgba(0, 0, 0, 0.06)",
-              },
-            }}
-          >
-            <CloseIcon fontSize="small" />
-          </IconButton>
-        </DialogTitle>
-
-        <DialogContent>
-          <DialogContentText
-            sx={{
-              mb: 2,
-              color: "#50575e",
-            }}
-          >
-            Please enter an email address of the user you would like to share
-            this inspection report with.
-          </DialogContentText>
-
-          <TextField
-            autoFocus
-            fullWidth
-            size="small"
-            label="Email address *"
-            placeholder="Email address"
-            type="email"
-            value={shareEmail}
-            onChange={(event) => handleShareEmailChange(event.target.value)}
-            error={Boolean(shareEmailError)}
-            helperText={shareEmailError ?? ""}
-            disabled={shareLoading}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !shareLoading) {
-                event.preventDefault();
-                void handleShareSubmit();
-              }
-            }}
+          <ReportOptionsDialog
+            open={reportOptionsOpen}
+            onClose={() => setReportOptionsOpen(false)}
+            onDownload={handleDownloadWithOptions}
+            levelOptions={availableLevelOptions}
+            key={availableLevelOptions.join("|")}
           />
 
-          {shareError && (
-            <Alert severity="error" sx={{ mt: 2 }}>
-              {shareError}
-            </Alert>
-          )}
-        </DialogContent>
-
-        <DialogActions
-          sx={{
-            px: 3,
-            pb: 2,
-          }}
-        >
-          <Button
-            onClick={handleShareClose}
-            disabled={shareLoading}
-            sx={{
-              textTransform: "none",
-              color: "#50575e",
-            }}
+          <Dialog
+            open={shareOpen}
+            onClose={handleShareClose}
+            maxWidth="xs"
+            fullWidth
           >
-            Cancel
-          </Button>
+            <DialogTitle
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                fontWeight: 700,
+                color: "#2A276E",
+              }}
+            >
+              File share
+              <IconButton
+                size="small"
+                onClick={handleShareClose}
+                disabled={shareLoading}
+                sx={{
+                  color: "#50575e",
+                  "&:hover": {
+                    bgcolor: "rgba(0, 0, 0, 0.06)",
+                  },
+                }}
+              >
+                <CloseIcon fontSize="small" />
+              </IconButton>
+            </DialogTitle>
 
-          <Button
-            variant="contained"
-            onClick={() => void handleShareSubmit()}
-            disabled={shareLoading || !shareEmail.trim()}
-            startIcon={
-              shareLoading ? (
-                <CircularProgress size={16} color="inherit" />
-              ) : undefined
-            }
-            sx={{
-              textTransform: "none",
-              bgcolor: "#2A276E",
-              "&:hover": {
-                bgcolor: "#1f1d57",
-              },
-              "&.Mui-disabled": {
-                bgcolor: "#d9d9d9",
-                color: "#8a8a8a",
-              },
-            }}
-          >
-            {shareLoading ? "Sharing..." : "Share"}
-          </Button>
-        </DialogActions>
-      </Dialog>
+            <DialogContent>
+              <DialogContentText
+                sx={{
+                  mb: 2,
+                  color: "#50575e",
+                }}
+              >
+                Please enter an email address of the user you would like to share
+                this inspection report with.
+              </DialogContentText>
 
-      {/* =========================================================
+              <TextField
+                autoFocus
+                fullWidth
+                size="small"
+                label="Email address *"
+                placeholder="Email address"
+                type="email"
+                value={shareEmail}
+                onChange={(event) => handleShareEmailChange(event.target.value)}
+                error={Boolean(shareEmailError)}
+                helperText={shareEmailError ?? ""}
+                disabled={shareLoading}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !shareLoading) {
+                    event.preventDefault();
+                    void handleShareSubmit();
+                  }
+                }}
+              />
+
+              {shareError && (
+                <Alert severity="error" sx={{ mt: 2 }}>
+                  {shareError}
+                </Alert>
+              )}
+            </DialogContent>
+
+            <DialogActions
+              sx={{
+                px: 3,
+                pb: 2,
+              }}
+            >
+              <Button
+                onClick={handleShareClose}
+                disabled={shareLoading}
+                sx={{
+                  textTransform: "none",
+                  color: "#50575e",
+                }}
+              >
+                Cancel
+              </Button>
+
+              <Button
+                variant="contained"
+                onClick={() => void handleShareSubmit()}
+                disabled={shareLoading || !shareEmail.trim()}
+                startIcon={
+                  shareLoading ? (
+                    <CircularProgress size={16} color="inherit" />
+                  ) : undefined
+                }
+                sx={{
+                  textTransform: "none",
+                  bgcolor: "#2A276E",
+                  "&:hover": {
+                    bgcolor: "#1f1d57",
+                  },
+                  "&.Mui-disabled": {
+                    bgcolor: "#d9d9d9",
+                    color: "#8a8a8a",
+                  },
+                }}
+              >
+                {shareLoading ? "Sharing..." : "Share"}
+              </Button>
+            </DialogActions>
+          </Dialog>
+
+          {/* =========================================================
           SUCCESS SNACKBAR
          ========================================================= */}
 
-      <Snackbar
-        open={shareSuccess}
-        autoHideDuration={4000}
-        onClose={() => setShareSuccess(false)}
-        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
-      >
-        <Alert
-          onClose={() => setShareSuccess(false)}
-          severity="success"
-          variant="filled"
-          sx={{ width: "100%" }}
-        >
-          Inspection report shared successfully.
-        </Alert>
-      </Snackbar>
+          <Snackbar
+            open={shareSuccess}
+            autoHideDuration={4000}
+            onClose={() => setShareSuccess(false)}
+            anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+          >
+            <Alert
+              onClose={() => setShareSuccess(false)}
+              severity="success"
+              variant="filled"
+              sx={{ width: "100%" }}
+            >
+              Inspection report shared successfully.
+            </Alert>
+          </Snackbar>
 
-      {/* =========================================================
+          {/* =========================================================
           CROP COMPARE RESULTS DIALOG
           Shows region-scoped findings from the crop pipeline — kept
           separate from the main full-page difference table.
          ========================================================= */}
 
-      <Dialog
-        open={cropDialogOpen}
-        onClose={() => setCropDialogOpen(false)}
-        maxWidth="md"
-        fullWidth
-      >
-        <DialogTitle
-          sx={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            bgcolor: "#2A276E",
-            color: "#ffffff",
-          }}
-        >
-          <Box>
-            <Typography variant="h6" sx={{ fontWeight: 700 }}>
-              Crop Compare Results
-            </Typography>
-            {cropRegion && (
-              <Typography variant="caption" sx={{ opacity: 0.85 }}>
-                Page {cropRegion.page + 1} · region x=
-                {Math.round(cropRegion.box.x)}, y=
-                {Math.round(cropRegion.box.y)}, w=
-                {Math.round(cropRegion.box.width)}, h=
-                {Math.round(cropRegion.box.height)} px (DPI 150)
-              </Typography>
-            )}
-          </Box>
-          <IconButton
-            size="small"
-            onClick={() => setCropDialogOpen(false)}
-            sx={{ color: "#ffffff" }}
+          <Dialog
+            open={cropDialogOpen}
+            onClose={() => setCropDialogOpen(false)}
+            maxWidth="md"
+            fullWidth
           >
-            <CloseIcon fontSize="small" />
-          </IconButton>
-        </DialogTitle>
-
-        <DialogContent dividers sx={{ p: 0 }}>
-          {cropRunning ? (
-            <Box sx={{ py: 6, textAlign: "center" }}>
-              <CircularProgress size={32} />
-              <Typography sx={{ mt: 2 }} color="text.secondary">
-                Running crop inspection…
-              </Typography>
-            </Box>
-          ) : cropError ? (
-            <Alert severity="error" sx={{ m: 2 }}>
-              {cropError}
-            </Alert>
-          ) : cropResult ? (
-            <Box>
-              <Box
-                sx={{
-                  px: 2,
-                  py: 1.5,
-                  bgcolor: "#f7f8f9",
-                  borderBottom: "1px solid #e0e0e0",
-                }}
-              >
-                <Typography
-                  variant="body2"
-                  sx={{ fontWeight: 600, color: "#3f4650" }}
-                >
-                  {cropResult.findings.length}{" "}
-                  {cropResult.findings.length === 1 ? "finding" : "findings"} in
-                  the cropped region — matched{" "}
-                  {cropResult.match_stats.matched_pairs} pairs,{" "}
-                  {cropResult.match_stats.unmatched_master} missing in sample,{" "}
-                  {cropResult.match_stats.unmatched_sample} extra in sample
+            <DialogTitle
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                bgcolor: "#2A276E",
+                color: "#ffffff",
+              }}
+            >
+              <Box>
+                <Typography variant="h6" sx={{ fontWeight: 700 }}>
+                  Crop Compare Results
                 </Typography>
-                {cropResult.log_file && (
-                  <Typography variant="caption" color="text.secondary">
-                    Logged to: {cropResult.log_file}
+                {cropRegion && (
+                  <Typography variant="caption" sx={{ opacity: 0.85 }}>
+                    Page {cropRegion.page + 1} · region x=
+                    {Math.round(cropRegion.box.x)}, y=
+                    {Math.round(cropRegion.box.y)}, w=
+                    {Math.round(cropRegion.box.width)}, h=
+                    {Math.round(cropRegion.box.height)} px (DPI 150)
                   </Typography>
                 )}
               </Box>
+              <IconButton
+                size="small"
+                onClick={() => setCropDialogOpen(false)}
+                sx={{ color: "#ffffff" }}
+              >
+                <CloseIcon fontSize="small" />
+              </IconButton>
+            </DialogTitle>
 
-              {cropResult.findings.length === 0 ? (
-                <Box sx={{ py: 5, textAlign: "center" }}>
-                  <Typography color="text.secondary">
-                    No differences found in the cropped region.
+            <DialogContent dividers sx={{ p: 0 }}>
+              {cropRunning ? (
+                <Box sx={{ py: 6, textAlign: "center" }}>
+                  <CircularProgress size={32} />
+                  <Typography sx={{ mt: 2 }} color="text.secondary">
+                    Running crop inspection…
                   </Typography>
                 </Box>
-              ) : (
-                <TableContainer sx={{ maxHeight: 380 }}>
-                  <Table stickyHeader size="small">
-                    <TableHead>
-                      <TableRow>
-                        <TableCell
-                          sx={{ fontWeight: 700, color: "#50575e", width: 80 }}
-                        >
-                          Type
-                        </TableCell>
-                        <TableCell sx={{ fontWeight: 700, color: "#50575e" }}>
-                          Master
-                        </TableCell>
-                        <TableCell sx={{ fontWeight: 700, color: "#50575e" }}>
-                          Sample
-                        </TableCell>
-                        <TableCell sx={{ fontWeight: 700, color: "#50575e" }}>
-                          Comment
-                        </TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {cropResult.findings.map((finding) => (
-                        <TableRow key={finding.id} hover>
-                          <TableCell>
-                            <Typography
-                              sx={{
-                                fontSize: 12,
-                                fontWeight: 700,
-                                color: "#6a1b9a",
-                                bgcolor: "rgba(106, 27, 154, 0.08)",
-                                borderRadius: 1,
-                                px: 0.75,
-                                py: 0.25,
-                                display: "inline-block",
-                              }}
-                            >
-                              {finding.type}
-                            </Typography>
-                          </TableCell>
-                          <TableCell
-                            sx={{ maxWidth: 220, wordBreak: "break-word" }}
-                          >
-                            {finding.master || "(none)"}
-                          </TableCell>
-                          <TableCell
-                            sx={{ maxWidth: 220, wordBreak: "break-word" }}
-                          >
-                            {finding.sample || "(none)"}
-                          </TableCell>
-                          <TableCell sx={{ wordBreak: "break-word" }}>
-                            {finding.comment}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
-              )}
-            </Box>
-          ) : null}
-        </DialogContent>
+              ) : cropError ? (
+                <Alert severity="error" sx={{ m: 2 }}>
+                  {cropError}
+                </Alert>
+              ) : cropResult ? (
+                <Box>
+                  <Box
+                    sx={{
+                      px: 2,
+                      py: 1.5,
+                      bgcolor: "#f7f8f9",
+                      borderBottom: "1px solid #e0e0e0",
+                    }}
+                  >
+                    <Typography
+                      variant="body2"
+                      sx={{ fontWeight: 600, color: "#3f4650" }}
+                    >
+                      {cropResult.findings.length}{" "}
+                      {cropResult.findings.length === 1 ? "finding" : "findings"} in
+                    </Typography>
+                  </Box>
+                </Box>
+              ) : null}
+            </DialogContent>
 
-        <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button
-            onClick={() => setCropDialogOpen(false)}
-            sx={{ textTransform: "none", color: "#50575e" }}
-          >
-            Close
-          </Button>
-        </DialogActions>
-      </Dialog>
+            <DialogActions
+              sx={{
+                px: 3,
+                pb: 2,
+              }}
+            >
+              <Button
+                onClick={() => setCropDialogOpen(false)}
+                disabled={cropRunning}
+                sx={{
+                  textTransform: "none",
+                  color: "#50575e",
+                }}
+              >
+                Cancel
+              </Button>
+
+              <Button
+                variant="contained"
+                onClick={() => {
+                  if (cropRegion) {
+                    void handleCropComplete(cropRegion.page, cropRegion.box);
+                  }
+                }}
+                disabled={cropRunning || !cropRegion}
+                startIcon={
+                  cropRunning ? (
+                    <CircularProgress size={16} color="inherit" />
+                  ) : undefined
+                }
+                sx={{
+                  textTransform: "none",
+                  bgcolor: "#2A276E",
+                  "&:hover": {
+                    bgcolor: "#1f1d57",
+                  },
+                  "&.Mui-disabled": {
+                    bgcolor: "#d9d9d9",
+                    color: "#8a8a8a",
+                  },
+                }}
+              >
+                {cropRunning ? "Running..." : "Complete"}
+              </Button>
+            </DialogActions>
+          </Dialog>
+        </>
+      )}
 
       {/* =========================================================
-          REPORT OPTIONS DIALOG (DOWNLOAD PDF)
-         ========================================================= */}
+      FOOTER
+     ========================================================= */}
 
-      <ReportOptionsDialog
-        key={availableLevelOptions.join("|")}
-        open={reportOptionsOpen}
-        onClose={() => setReportOptionsOpen(false)}
-        onDownload={handleDownloadWithOptions}
-        levelOptions={availableLevelOptions}
-      />
     </Box>
   );
 }

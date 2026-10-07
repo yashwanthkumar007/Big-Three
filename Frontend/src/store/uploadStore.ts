@@ -1,5 +1,9 @@
 import { create } from "zustand";
 import type { InspectionReport } from "@/shared/api/inspectionApi";
+import {
+  createDefaultBarcodeConfig,
+  type BarcodeConfig,
+} from "@/shared/config/barcodeInspectionConfig";
 
 export type InspectionType =
   | "text"
@@ -56,6 +60,37 @@ export type InspectionStatus =
   | "completed"
   | "failed";
 
+/** Recursively optional view of a type, used for configuration patches. */
+export type DeepPartial<T> = {
+  [K in keyof T]?: T[K] extends Record<string, unknown>
+    ? DeepPartial<T[K]>
+    : T[K] extends (infer U)[]
+      ? U[]
+      : T[K];
+};
+
+/** Deeply merges a patch into a target object without mutating either. */
+const deepMerge = <T,>(target: T, patch: DeepPartial<T>): T => {
+  const output = { ...target } as Record<string, unknown>;
+  for (const [key, value] of Object.entries(patch as Record<string, unknown>)) {
+    if (value === undefined) {
+      continue;
+    }
+    const current = output[key];
+    output[key] =
+      value !== null &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      current !== null &&
+      typeof current === "object" &&
+      !Array.isArray(current)
+        ? deepMerge(current, value as DeepPartial<unknown>)
+        : value;
+  }
+  return output as T;
+};
+
+
 interface UploadState {
   masterFile: File | null;
   sampleFile: File | null;
@@ -67,6 +102,12 @@ interface UploadState {
   sessionId: string | null;
   error: string | null;
   differenceFilters: DifferenceFilters;
+
+  /**
+   * Barcode Inspection configuration panel state. One object drives the whole
+   * panel and is sent to the backend as `barcode_config` on Inspect.
+   */
+  barcodeConfig: BarcodeConfig;
 
   /** Per-difference comment/status selections. Key = difference id. */
   commentSelections: Record<number, string>;
@@ -83,6 +124,11 @@ interface UploadState {
   setSessionId: (sessionId: string | null) => void;
   setError: (error: string | null) => void;
   setDifferenceFilters: (filters: DifferenceFilters) => void;
+  setBarcodeConfig: (config: BarcodeConfig) => void;
+  /** Merges a partial update into the Barcode Inspection configuration. */
+  patchBarcodeConfig: (patch: DeepPartial<BarcodeConfig>) => void;
+  /** Restores the documented Barcode Inspection defaults. */
+  resetBarcodeConfig: () => void;
   setCommentSelections: (selections: Record<number, string>) => void;
   setLevelSelections: (selections: Record<number, string>) => void;
   setCustomComments: (comments: string[]) => void;
@@ -185,6 +231,7 @@ export const useUploadStore = create<UploadState>()((set, get) => ({
   sessionId: null,
   error: null,
   differenceFilters: { ...DEFAULT_DIFFERENCE_FILTERS },
+  barcodeConfig: createDefaultBarcodeConfig(),
   commentSelections: {},
   levelSelections: {},
   customComments: [],
@@ -229,6 +276,21 @@ export const useUploadStore = create<UploadState>()((set, get) => ({
   setDifferenceFilters: (filters) =>
     set({
       differenceFilters: filters,
+    }),
+
+  setBarcodeConfig: (config) =>
+    set({
+      barcodeConfig: config,
+    }),
+
+  patchBarcodeConfig: (patch) =>
+    set((state) => ({
+      barcodeConfig: deepMerge(state.barcodeConfig, patch),
+    })),
+
+  resetBarcodeConfig: () =>
+    set({
+      barcodeConfig: createDefaultBarcodeConfig(),
     }),
 
   setCommentSelections: (selections) => {
@@ -286,6 +348,7 @@ export const useUploadStore = create<UploadState>()((set, get) => ({
       sessionId: null,
       error: null,
       differenceFilters: { ...DEFAULT_DIFFERENCE_FILTERS },
+      barcodeConfig: createDefaultBarcodeConfig(),
       commentSelections: {},
       levelSelections: {},
       customComments: [],

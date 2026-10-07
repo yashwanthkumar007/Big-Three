@@ -26,8 +26,10 @@ _BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _BACKEND_ROOT not in sys.path:
     sys.path.insert(0, _BACKEND_ROOT)
 
-# Import the text inspection pipeline (currently the only registered one).
+# Import the registered inspection pipelines.
 from src.pipelines.comparison_pipeline import run_text_inspection  # noqa: E402
+# The Barcode Inspection engine is a single self-contained module.
+from barcode_inspection import run_barcode_inspection  # noqa: E402
 
 
 class InspectionConfig:
@@ -61,6 +63,10 @@ _INSPECTION_REGISTRY: dict[str, InspectionConfig] = {
     "text": InspectionConfig(
         pipeline=run_text_inspection,
         label="Text Inspection",
+    ),
+    "barcode": InspectionConfig(
+        pipeline=run_barcode_inspection,
+        label="Barcode Inspection",
     ),
 }
 

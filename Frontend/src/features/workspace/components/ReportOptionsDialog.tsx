@@ -31,7 +31,7 @@ export type ReportOptions = {
  * admins add custom severity filters in the future, the popup will
  * automatically show only the levels that exist on the differences.
  */
-export const REPORT_LEVEL_OPTIONS = ["None", "Low", "Medium", "High", "Critical"];
+const REPORT_LEVEL_OPTIONS = ["None", "Low", "Medium", "High", "Critical"];
 
 type ReportOptionsDialogProps = {
   open: boolean;

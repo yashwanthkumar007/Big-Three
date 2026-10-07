@@ -10,6 +10,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import {
   useCallback,
   useEffect,
+  useRef,
   useState,
 } from "react";
 
@@ -17,7 +18,15 @@ import ViewerPane from "./components/ViewerPane";
 
 import InspectionSidebar from "./components/InspectionSidebar";
 
+import BarcodeInspectionSidebar from "./components/BarcodeInspectionSidebar";
+
 import InspectionLoading from "./components/InspectionLoading";
+
+import BarcodeInspectionLoading from "./components/BarcodeInspectionLoading";
+
+import BarcodeInspectionResults, {
+  type BarcodeResultPageModel,
+} from "./components/BarcodeInspectionResults";
 
 import InspectionResults, {
   type InspectionResult,
@@ -27,7 +36,15 @@ import InspectionResults, {
 import { useUploadStore, type InspectionType } from "@/store/uploadStore";
 import { truncateFileName } from "@/shared/utils/truncateFileName";
 
-import { startInspection, createInspection } from "@/shared/api/inspectionApi";
+import {
+  createBarcodeInspection,
+  startInspection,
+  createInspection,
+} from "@/shared/api/inspectionApi";
+
+import { useBarcodeJobStatus } from "@/shared/hooks/useBarcodeJobStatus";
+
+import { BARCODE_STAGE_LABELS } from "@/shared/config/barcodeInspectionConfig";
 
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -43,6 +60,9 @@ export default function WorkspacePage() {
   const [sidebarOpen, setSidebarOpen] =
     useState(false);
 
+  const [isFullscreen, setIsFullscreen] =
+    useState(false);
+
   const [
     selectedDifference,
     setSelectedDifference,
@@ -56,6 +76,7 @@ export default function WorkspacePage() {
     inspectionStatus,
     inspectionReport,
     differenceFilters,
+    barcodeConfig,
     sessionId: storeSessionId,
     setInspectionStatus,
     setInspectionReport,
@@ -70,12 +91,55 @@ export default function WorkspacePage() {
     setStatus,
   } = useLoadingStatus();
 
+  /*
+   * Barcode Inspection does NOT open its filter panel automatically after the
+   * upload. The document simply opens in the existing viewer and the panel is
+   * opened on demand by the top "Start" button. An inspection is never started
+   * merely because the upload succeeded.
+   */
+  const [barcodePageCount, setBarcodePageCount] = useState(1);
+
+  /*
+   * Barcode Inspection is a SINGLE-FILE workflow: the id of the barcode job is
+   * tracked so the processing screen can poll the real backend stage/status
+   * and cancel the run. No Master/Sample job ids are involved.
+   */
+  const [barcodeInspectionId, setBarcodeInspectionId] = useState<string | null>(
+    null,
+  );
+
+  /*
+   * Re-entry guard for the Start action. Only one inspection may be started
+   * per click: a second click (or a double click) while the first one is still
+   * being created must not create a second job.
+   */
+  const isStartingRef = useRef(false);
+
+  const isBarcodeInspection = inspectionType === "barcode";
+
+  const barcodeJob = useBarcodeJobStatus(
+    isBarcodeInspection ? barcodeInspectionId : null,
+  );
+
+  /**
+   * Cancels the running barcode job and returns to the document viewer. The
+   * uploaded file and the inspection record are kept by the backend.
+   */
+  const handleCancelBarcode = useCallback(async () => {
+    await barcodeJob.cancel();
+
+    setInspectionStatus("idle");
+    setStatus(null);
+    setBarcodeInspectionId(null);
+    setSessionId(null);
+  }, [barcodeJob, setInspectionStatus, setStatus, setSessionId]);
+
   /* ------------------------------------------------------------------ */
   /* Redirect to upload page if files are missing                       */
   /* ------------------------------------------------------------------ */
 
   useEffect(() => {
-    if (!masterFile || !sampleFile) {
+    if (!masterFile || (!sampleFile && (inspectionType ?? "text") !== "barcode")) {
       navigate(
         `/workspace/${inspectionType ?? "text"}/upload`
       );
@@ -93,17 +157,26 @@ export default function WorkspacePage() {
 
   const runInspection = useCallback(async () => {
     /*
+     * Re-entry guard: the Start action may only be in flight once. A double
+     * click must never create a second inspection or a second barcode job.
+     */
+    if (isStartingRef.current) {
+      return;
+    }
+
+    /*
      * The inspection type comes from the URL parameter and is passed
      * through to the backend via `inspection_type`, which dispatches
      * to the correct pipeline.  Any registered inspection type
      * (text, graphics, spelling, …) is supported here.
      */
-    if (
-      !masterFile ||
-      !sampleFile
-    ) {
+    if (!masterFile || (!sampleFile && (inspectionType ?? "text") !== "barcode")) {
       return;
     }
+
+    const resolvedSampleFile = inspectionType === "barcode" ? masterFile : (sampleFile ?? masterFile);
+
+    isStartingRef.current = true;
 
     try {
       /*
@@ -125,7 +198,7 @@ export default function WorkspacePage() {
       try {
         const inspection = await createInspection(
           masterFile,
-          sampleFile,
+          resolvedSampleFile,
           inspectionType ?? "text"
         );
         inspectionId = inspection.inspectionId;
@@ -136,17 +209,45 @@ export default function WorkspacePage() {
         );
       }
 
+      /*
+       * Barcode Inspection is started as a BACKGROUND job.
+       *
+       * The engine runs on the server: this call returns as soon as the job
+       * exists, so the result page can be opened immediately and then poll the
+       * job for live progress and the final results. Nothing here waits for
+       * barcode detection to finish — that is what used to block the browser
+       * for the whole inspection.
+       */
+      if (isBarcodeInspection) {
+        if (!inspectionId) {
+          throw new Error(
+            "The document could not be stored, so the inspection could not start. Please try again."
+          );
+        }
+
+        const job = await createBarcodeInspection(inspectionId, barcodeConfig);
+
+        // The job id is all the result page needs; it takes over from here and
+        // the engine keeps running server-side.
+        setBarcodeInspectionId(job.inspectionId);
+        setSessionId(null);
+        setStatus(null);
+        setInspectionStatus("inspecting");
+        return;
+      }
+
       const {
         sessionId,
         report,
       } = await startInspection(
         masterFile,
-        sampleFile,
+        resolvedSampleFile,
         {
           /* Dynamic session ID prefix follows the inspection type
            * (text -> TXT-, graphics -> GRP-, etc.). */
           inspectionType: inspectionType as InspectionType,
           differenceFilters,
+          barcodeConfig: isBarcodeInspection ? barcodeConfig : undefined,
           inspectionId,
           onStatus: ({
             status: currentStatus,
@@ -182,7 +283,7 @@ export default function WorkspacePage() {
       // Store file names in the shared store so the Difference List
       // window can display them without needing the File objects.
       setMasterFile(masterFile);
-      setSampleFile(sampleFile);
+      setSampleFile(resolvedSampleFile);
 
       setInspectionStatus("completed");
 
@@ -208,12 +309,17 @@ export default function WorkspacePage() {
         "Inspection error:",
         error
       );
+    } finally {
+      // The Start action may be used again as soon as this run settles.
+      isStartingRef.current = false;
     }
   }, [
     masterFile,
     sampleFile,
     inspectionType,
     differenceFilters,
+    barcodeConfig,
+    isBarcodeInspection,
     queryClient,
     setInspectionStatus,
     setInspectionReport,
@@ -223,7 +329,6 @@ export default function WorkspacePage() {
     setMasterFile,
     setSampleFile,
   ]);
-
   /* ------------------------------------------------------------------ */
   /* IMPORTANT                                                          */
   /* ------------------------------------------------------------------ */
@@ -242,9 +347,18 @@ export default function WorkspacePage() {
   /* Files must exist before using masterFile/sampleFile                */
   /* ------------------------------------------------------------------ */
 
-  if (!masterFile || !sampleFile) {
+  if (!masterFile || (!sampleFile && (inspectionType ?? "text") !== "barcode")) {
     return null;
   }
+
+  const effectiveSampleFile = sampleFile ?? masterFile;
+
+  /*
+   * Barcode Inspection works on a single source file (master === sample),
+   * so it renders one full-width viewer instead of the side-by-side
+   * comparison used by Text Inspection.
+   */
+  const isBarcode = inspectionType === "barcode";
 
   /* ------------------------------------------------------------------ */
   /* Build inspection result                                           */
@@ -311,30 +425,14 @@ export default function WorkspacePage() {
 
             sampleBox:
               finding.sample_box,
+
+            barcodeType: finding.barcode_type ?? null,
+            decodedValue: finding.decoded_value ?? null,
+            grade: finding.grade ?? null,
           })
         );
 
-      const pages =
-        inspectionReport.pages.map(
-          (page) => ({
-            page: page.page,
-
-            masterWidth:
-              page.master_width,
-
-            masterHeight:
-              page.master_height,
-
-            sampleWidth:
-              page.sample_width,
-
-            sampleHeight:
-              page.sample_height,
-
-            sampleImage:
-              page.sample_image,
-          })
-        );
+      const pages = inspectionReport.pages ?? [];
 
       return {
         /*
@@ -354,7 +452,7 @@ export default function WorkspacePage() {
           masterFile.name,
 
         sampleFileName:
-          sampleFile.name,
+          effectiveSampleFile.name,
 
         /*
          * Difference count comes from
@@ -375,6 +473,94 @@ export default function WorkspacePage() {
     buildInspectionResult();
 
   /* ------------------------------------------------------------------ */
+  /* Barcode result model (single file, no Master/Sample)              */
+  /* ------------------------------------------------------------------ */
+
+  /**
+   * Maps the stored barcode findings onto the Barcode result page model.
+   * Values (type, decoded value, grade, page, box) all come from the engine —
+   * nothing is invented here.
+   */
+  /*
+   * Barcode result model (single file, no Master/Sample).
+   *
+   * Plainly derived rather than memoised: the early return below means no
+   * hook may be called from here, and the work is a couple of small maps
+   * over the findings.
+   *
+   * Results from the background job are authoritative: the engine returned
+   * them already deduplicated. The report-derived list is kept for the
+   * legacy /api/inspect path. Unvalidated engine placeholders are dropped,
+   * the survivors are ordered by document position (page, then Y, then X)
+   * and ids are assigned 1, 2, 3 ... AFTER that ordering — so the table,
+   * the count badge, the viewer overlays and the comments panel always
+   * agree on both the count and the identity of each finding.
+   */
+  /*
+   * `validated: false` marks the engine's provisional TBC placeholders —
+   * regions flagged as barcode-shaped but never successfully decoded.
+   * Those are not results: they must never become rows, never be counted
+   * in the badge and never appear as comment cards.
+   */
+  const jobBarcodes = barcodeJob.barcodes
+    .filter((barcode) => barcode.validated !== false)
+    .map((barcode) => ({
+      id: barcode.id,
+      type: barcode.type,
+      decodedValue: barcode.decodedValue,
+      grade: barcode.grade,
+      /* The page model is 0-based (see goToId / pageFilter). */
+      page: Math.max(0, (barcode.page ?? 1) - 1),
+      box: barcode.bbox ?? null,
+      /* Page geometry in the bbox's own units, so the overlay can be mapped
+         onto the rendered page without assuming a paper size. */
+      pageWidth: barcode.pageWidth ?? null,
+      pageHeight: barcode.pageHeight ?? null,
+      coordinateSystem: barcode.coordinateSystem ?? null,
+      quality: (barcode.qualityMetrics ?? null) as Record<string, string> | null,
+      /* Heuristic verification block; null on results predating the verifier. */
+      verification: barcode.verification ?? null,
+    }));
+
+  const reportBarcodes = (inspectionReport?.findings ?? [])
+    .filter((finding) => finding.type === "Barcode")
+    .map((finding, index) => ({
+      // Prefer the engine-assigned id; fall back to document position.
+      id: finding.id ?? index + 1,
+      type: finding.barcode_type ?? finding.type,
+      decodedValue: finding.decoded_value ?? finding.master,
+      grade: finding.grade ?? null,
+      page: Math.max(0, (finding.page ?? 1) - 1),
+      box: finding.master_box ?? finding.sample_box ?? null,
+      quality: null,
+    }));
+
+  const barcodeFindings =
+    jobBarcodes.length > 0 ? jobBarcodes : reportBarcodes;
+
+  /*
+   * Document position order: page ascending, then Y ascending, then X
+   * ascending — never decoder discovery order. Ids are (re)assigned 1, 2,
+   * 3 ... after this sort, so the ID column reflects the reading order of
+   * the document and stays consistent with the overlays and comment cards.
+   */
+  const barcodesInDocumentOrder = [...barcodeFindings].sort(
+    (a, b) =>
+      a.page - b.page ||
+      (a.box?.y ?? 0) - (b.box?.y ?? 0) ||
+      (a.box?.x ?? 0) - (b.box?.x ?? 0),
+  );
+
+  const barcodeResultModel: BarcodeResultPageModel = {
+    inspectionId: storeSessionId ?? "barcode",
+    fileName: masterFile.name,
+    barcodes: barcodesInDocumentOrder.map((barcode, index) => ({
+      ...barcode,
+      id: index + 1,
+    })),
+  };
+
+  /* ------------------------------------------------------------------ */
   /* Loading state                                                      */
   /* ------------------------------------------------------------------ */
 
@@ -382,25 +568,53 @@ export default function WorkspacePage() {
     inspectionStatus === "uploading" ||
     inspectionStatus === "inspecting"
   ) {
+    /*
+     * Barcode Inspection opens its RESULT page immediately.
+     *
+     * The full-screen waiting screen is only used for the short window while
+     * the file is stored and the background job is being created. As soon as
+     * the job id exists the user is on the real result page, which polls the
+     * running job and fills itself in when the engine finishes. The browser is
+     * never parked on a spinner for the length of the inspection.
+     */
+    if (isBarcodeInspection) {
+      if (inspectionStatus === "inspecting" && barcodeInspectionId) {
+        return (
+          <BarcodeInspectionResults
+            result={barcodeResultModel}
+            file={masterFile}
+            isFullscreen={isFullscreen}
+            onToggleFullscreen={() => setIsFullscreen((fullscreen) => !fullscreen)}
+            jobStatus={barcodeJob.status ?? "processing"}
+            stageLabel={BARCODE_STAGE_LABELS[barcodeJob.stage]}
+            progress={{
+              currentPage: barcodeJob.currentPage,
+              totalPages: barcodeJob.totalPages,
+            }}
+            error={barcodeJob.error}
+            onCancel={handleCancelBarcode}
+            isCancelling={barcodeJob.isCancelling}
+          />
+        );
+      }
+
+      return (
+        <BarcodeInspectionLoading
+          stage={barcodeJob.stage}
+          isCancelling={barcodeJob.isCancelling}
+          onCancel={handleCancelBarcode}
+        />
+      );
+    }
+
     return (
       <InspectionLoading
-        inspectionType={
-          inspectionType ?? "text"
-        }
-        status={
-          status ??
-          "Uploading files..."
-        }
+        inspectionType={inspectionType ?? "text"}
+        status={status ?? "Uploading files..."}
         onCancel={() => {
           setInspectionStatus("idle");
-
           setStatus(null);
-
-          navigate(
-            `/workspace/${
-              inspectionType ?? "text"
-            }/upload`
-          );
+          navigate(`/workspace/${inspectionType ?? "text"}/upload`);
         }}
       />
     );
@@ -442,11 +656,31 @@ export default function WorkspacePage() {
     inspectionStatus === "completed" &&
     inspectionResult
   ) {
+    /*
+     * Barcode Inspection renders its OWN result page — never the generic
+     * Master/Sample/Difference result.
+     */
+    if (isBarcodeInspection) {
+      return (
+        <BarcodeInspectionResults
+          result={barcodeResultModel}
+          file={masterFile}
+          isFullscreen={isFullscreen}
+          onToggleFullscreen={() => setIsFullscreen((fullscreen) => !fullscreen)}
+        />
+      );
+    }
+
     return (
       <InspectionResults
         result={inspectionResult}
         masterFile={masterFile}
-        sampleFile={sampleFile}
+        sampleFile={effectiveSampleFile}
+        onRefreshInspection={() => {
+          void queryClient.invalidateQueries({ queryKey: ["inspections"] });
+        }}
+        isFullscreen={isFullscreen}
+        onToggleFullscreen={() => setIsFullscreen((fullscreen) => !fullscreen)}
         selectedDifference={
           selectedDifference
         }
@@ -464,8 +698,10 @@ export default function WorkspacePage() {
   return (
     <Box
       sx={{
-        minHeight:
+        height:
           "calc(100vh - 72px)",
+
+        minHeight: 0,
 
         display: "flex",
 
@@ -484,9 +720,9 @@ export default function WorkspacePage() {
         sx={{
           width: "100%",
 
-          px: 3,
+          px: isBarcode ? 1.5 : 3,
 
-          py: 2,
+          py: isBarcode ? 0.75 : 2,
 
           bgcolor: "#ffffff",
 
@@ -500,7 +736,7 @@ export default function WorkspacePage() {
 
             alignItems: "center",
 
-            gap: 2,
+            gap: isBarcode ? 1 : 2,
 
             minWidth: 0,
           }}
@@ -521,6 +757,10 @@ export default function WorkspacePage() {
             }
             sx={{
               textTransform: "none",
+
+              minWidth: isBarcode ? 56 : undefined,
+
+              height: isBarcode ? 32 : undefined,
 
               color: sidebarOpen
                 ? "#fff"
@@ -545,11 +785,39 @@ export default function WorkspacePage() {
             Start
           </Button>
 
+          {/*
+            Barcode Inspection: NO second start action here. The red
+            "Start >>" button was removed — the only control that starts
+            Barcode Inspection is the blue "Inspect" button inside the
+            Barcode Inspection configuration panel.
+          */}
+
+          {isBarcode && (
+            <Typography
+              variant="body2"
+              noWrap
+              title={masterFile.name}
+              sx={{
+                flex: 1,
+                minWidth: 0,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                color: "#30343b",
+              }}
+            >
+              <Box component="span" sx={{ fontWeight: 700 }}>
+                Filename:
+              </Box>{" "}
+              {truncateFileName(masterFile.name, 34)}
+            </Typography>
+          )}
+
           {/* ------------------------------------------------------------ */}
           {/* File Information                                             */}
           {/* ------------------------------------------------------------ */}
 
-          <Box
+          {!isBarcode && <Box
             sx={{
               display: "grid",
 
@@ -634,7 +902,7 @@ export default function WorkspacePage() {
               <Typography
                 variant="body2"
                 noWrap
-                title={sampleFile.name}
+                title={effectiveSampleFile.name}
                 sx={{
                   maxWidth: 300,
 
@@ -647,10 +915,10 @@ export default function WorkspacePage() {
                     "nowrap",
                 }}
               >
-                {truncateFileName(sampleFile.name)}
+                {truncateFileName(effectiveSampleFile.name)}
               </Typography>
             </Box>
-          </Box>
+          </Box>}
         </Box>
       </Box>
 
@@ -679,38 +947,40 @@ export default function WorkspacePage() {
 
         {sidebarOpen && (
           <>
-            {/* Overlay */}
-
+            {/*
+              Transparent click-catcher covering the whole screen behind the
+              panel. Clicking anywhere outside the panel closes it, for both
+              Barcode and the other inspection types. The Barcode panel itself
+              is fully opaque and sits above this backdrop.
+            */}
             <Box
+              data-testid="sidebar-backdrop"
               onClick={() =>
                 setSidebarOpen(false)
               }
               sx={{
                 position: "fixed",
-
                 inset: 0,
-
-                background:
-                  "rgba(0,0,0,0.18)",
-
                 zIndex: 1199,
               }}
             />
 
             {/* Sidebar */}
 
-            <InspectionSidebar
-              inspectionType={
-                inspectionType ??
-                "text"
-              }
-              onClose={() =>
-                setSidebarOpen(false)
-              }
-              onInspect={
-                runInspection
-              }
-            />
+            {isBarcode ? (
+              <BarcodeInspectionSidebar
+                pageCount={barcodePageCount}
+                isInspecting={Boolean(status)}
+                onClose={() => setSidebarOpen(false)}
+                onInspect={runInspection}
+              />
+            ) : (
+              <InspectionSidebar
+                inspectionType={inspectionType ?? "text"}
+                onClose={() => setSidebarOpen(false)}
+                onInspect={runInspection}
+              />
+            )}
           </>
         )}
 
@@ -729,6 +999,44 @@ export default function WorkspacePage() {
             overflow: "hidden",
           }}
         >
+          {/*
+            Barcode Inspection analyses a SINGLE source file, so the
+            master and sample are the same document. Rendering both
+            panes would duplicate the viewer, so Barcode gets one
+            full-width pane instead of the side-by-side comparison.
+          */}
+          {isBarcode ? (
+            <Box sx={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
+              <ViewerPane
+                title=""
+                file={masterFile}
+                inspectionType={inspectionType ?? "barcode"}
+                side="master"
+                hideHeader
+                compactViewer
+                selectedDifference={selectedDifference}
+                onToggleSidebar={() => setSidebarOpen((open) => !open)}
+                sidebarOpen={sidebarOpen}
+                onNumPagesChange={setBarcodePageCount}
+                onDocumentAction={() => setSidebarOpen(true)}
+                onComments={() => setSidebarOpen(true)}
+                onRefresh={() => {
+                  /*
+                    Refresh re-reads the persisted inspection record.
+                    It deliberately does NOT re-run the engine.
+                  */
+                  void queryClient.invalidateQueries({
+                    queryKey: ["inspections"],
+                  });
+                }}
+                isFullscreen={isFullscreen}
+                onToggleFullscreen={() =>
+                  setIsFullscreen((fullscreen) => !fullscreen)
+                }
+              />
+            </Box>
+          ) : (
+            <>
           {/* ---------------------------------------------------------- */}
           {/* Master PDF                                                  */}
           {/* ---------------------------------------------------------- */}
@@ -780,7 +1088,7 @@ export default function WorkspacePage() {
           >
             <ViewerPane
               title="Sample Artwork"
-              file={sampleFile}
+              file={effectiveSampleFile}
               inspectionType={
                 inspectionType ??
                 "text"
@@ -791,6 +1099,8 @@ export default function WorkspacePage() {
               }
             />
           </Box>
+            </>
+          )}
         </Box>
       </Box>
     </Box>

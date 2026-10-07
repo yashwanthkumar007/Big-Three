@@ -98,6 +98,9 @@ export default function DifferenceListPage() {
       page: finding.page,
       masterBox: finding.master_box,
       sampleBox: finding.sample_box,
+      barcodeType: finding.barcode_type ?? null,
+      decodedValue: finding.decoded_value ?? null,
+      grade: finding.grade ?? null,
     }));
   }, [inspectionReport, levelSelections]);
 

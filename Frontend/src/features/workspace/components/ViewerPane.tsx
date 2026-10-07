@@ -1,11 +1,13 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
  
 import { Box, Paper, Typography } from "@mui/material";
  
-import PdfToolbar from "./PdfToolbar";
+import PdfToolbar, {
+  type PageFilter,
+  type ViewerTool,
+} from "./PdfToolbar";
 import PdfViewer from "./PdfViewer";
 import type { InspectionDifference } from "./InspectionResults";
-import { truncateFileName } from "@/shared/utils/truncateFileName";
  
 type ViewerPaneProps = {
   title: string;
@@ -19,6 +21,25 @@ type ViewerPaneProps = {
   /** Crop Compare props - forwarded to PdfViewer (master side only). */
   cropMode?: boolean;
   onCropComplete?: (page0Based: number, box: { x: number; y: number; width: number; height: number }) => void;
+
+  /* ---- Extended viewer controls (wired to the shared toolbar) ---- */
+
+  /** Opens/closes the workspace navigation panel. */
+  onToggleSidebar?: () => void;
+  sidebarOpen?: boolean;
+  onDocumentAction?: () => void;
+  onComments?: () => void;
+  /** Re-reads persisted state; must never re-run the inspection engine. */
+  onRefresh?: () => void;
+  isFullscreen?: boolean;
+  onToggleFullscreen?: () => void;
+  onOverlayClick?: (difference: InspectionDifference) => void;
+  /** Hide the title, duplicate filename, and file size above the toolbar. */
+  hideHeader?: boolean;
+  /** Reduce the document's inner padding for the single-file barcode viewer. */
+  compactViewer?: boolean;
+  /** Reports the document page count so the page list can be built from it. */
+  onNumPagesChange?: (numPages: number) => void;
 };
  
 export default function ViewerPane({
@@ -32,16 +53,37 @@ export default function ViewerPane({
   zeroBasedPageIndex,
   cropMode,
   onCropComplete,
+  onToggleSidebar,
+  sidebarOpen,
+  onDocumentAction,
+  onComments,
+  onRefresh,
+  isFullscreen = false,
+  onToggleFullscreen,
+  onOverlayClick,
+  hideHeader = false,
+  compactViewer = false,
+  onNumPagesChange,
 }: ViewerPaneProps) {
   const [manualPageNumber, setManualPageNumber] =
     useState(1);
  
   const [numPages, setNumPages] =
     useState(1);
+
+  useEffect(() => {
+    onNumPagesChange?.(numPages);
+  }, [numPages, onNumPagesChange]);
  
   const [zoom, setZoom] = useState(100);
   const [lastSelectedId, setLastSelectedId] =
     useState<number | null>(null);
+
+  /* ---- Extended viewer state ---- */
+
+  const [tool, setTool] = useState<ViewerTool>("pan");
+  const [pageFilter, setPageFilter] = useState<PageFilter>("all");
+  const [searchQuery, setSearchQuery] = useState("");
 
   const fitPageZoom =
     naturalWidth && naturalHeight
@@ -121,12 +163,88 @@ export default function ViewerPane({
     selectedPageNumber !== null && selectedPageNumber >= 1
       ? clampPage(selectedPageNumber)
       : clampPage(manualPageNumber);
+
+  /**
+   * Applies the All / Odd / Even page filter. When the current page is
+   * filtered out, the viewer jumps to the nearest visible page, so these
+   * controls genuinely change what is rendered rather than only toggling
+   * a visual label.
+   */
+  const applyPageFilter = (filter: PageFilter) => {
+    setPageFilter(filter);
+
+    if (filter === "all") {
+      return;
+    }
+
+    const isVisible = (page: number) =>
+      filter === "odd" ? page % 2 === 1 : page % 2 === 0;
+
+    if (isVisible(effectivePageNumber)) {
+      return;
+    }
+
+    // Walk away from the current page until a matching page is found.
+    const step = filter === "odd" ? 1 : -1;
+    let candidate = effectivePageNumber + step;
+
+    while (candidate >= 1 && candidate <= numPages) {
+      if (isVisible(candidate)) {
+        setManualPageNumber(clampPage(candidate));
+        return;
+      }
+
+      candidate += step;
+    }
+
+    setManualPageNumber(clampPage(filter === "odd" ? 1 : 2));
+  };
+
+  /**
+   * Highlights matches of the search query in the react-pdf text layer.
+   * react-pdf already mounts a searchable text layer, so we query it
+   * instead of re-implementing PDF text extraction.
+   */
+  const runSearch = (query: string) => {
+    setSearchQuery(query);
+
+    const textLayer = document.querySelector(
+      ".react-pdf__Page__textContent"
+    ) as HTMLElement | null;
+
+    if (!textLayer) {
+      return;
+    }
+
+    const nodes = textLayer.querySelectorAll<HTMLElement>(
+      "span, br, div"
+    );
+
+    nodes.forEach((element) => {
+      element.style.background = "";
+    });
+
+    if (!query.trim()) {
+      return;
+    }
+
+    const needle = query.toLowerCase();
+
+    for (const element of Array.from(nodes)) {
+      if ((element.textContent ?? "").toLowerCase().includes(needle)) {
+        element.style.background = "#FFF59D";
+        element.scrollIntoView({ behavior: "smooth", block: "center" });
+        return;
+      }
+    }
+  };
  
   return (
     <Paper
       elevation={0}
       sx={{
         height: "100%",
+        minHeight: 0,
         display: "flex",
         flexDirection: "column",
         borderRadius: 0,
@@ -135,7 +253,7 @@ export default function ViewerPane({
     >
       {/* ================= Header ================= */}
  
-      <Box
+      {!hideHeader && <Box
         sx={{
           px: 3,
           py: 2,
@@ -143,13 +261,15 @@ export default function ViewerPane({
           backgroundColor: "#FAFAFA",
         }}
       >
-        <Typography
-          variant="h6"
-          sx={{ fontWeight: 600 }}
-          color="#2A276E"
-        >
-          {title}
-        </Typography>
+        {title && (
+          <Typography
+            variant="h6"
+            sx={{ fontWeight: 600 }}
+            color="#2A276E"
+          >
+            {title}
+          </Typography>
+        )}
  
         <Typography
           variant="body2"
@@ -164,7 +284,7 @@ export default function ViewerPane({
             whiteSpace: "nowrap",
           }}
         >
-          {truncateFileName(file.name)}
+          {file.name}
         </Typography>
  
         <Typography
@@ -174,6 +294,7 @@ export default function ViewerPane({
           {(file.size / (1024 * 1024)).toFixed(2)} MB
         </Typography>
       </Box>
+      }
  
       {/* ================= Toolbar ================= */}
  
@@ -194,6 +315,25 @@ export default function ViewerPane({
         }}
         onFitWidth={() => setZoom(100)}
         onFitPage={() => setZoom(fitPageZoom)}
+        onToggleSidebar={onToggleSidebar}
+        sidebarOpen={sidebarOpen}
+        tool={tool}
+        onToolChange={setTool}
+        onDocumentAction={onDocumentAction}
+        onSearch={runSearch}
+        onDocumentView={onDocumentAction}
+        onComments={onComments}
+        onRefresh={onRefresh}
+        isFullscreen={isFullscreen}
+        onToggleFullscreen={onToggleFullscreen}
+        onCancel={() => {
+          setManualPageNumber(1);
+          setSearchQuery("");
+        }}
+        hasSelection={Boolean(searchQuery)}
+        canUndo={false}
+        pageFilter={pageFilter}
+        onPageFilterChange={applyPageFilter}
       />
  
       {/* ================= PDF ================= */}
@@ -201,6 +341,7 @@ export default function ViewerPane({
       <Box
         sx={{
           flex: 1,
+          minHeight: 0,
           overflow: "hidden",
           backgroundColor: "#ECECEC",
         }}
@@ -215,8 +356,15 @@ export default function ViewerPane({
           zeroBasedPageIndex={zeroBasedPageIndex}
           pageNumber={effectivePageNumber}
           zoom={zoom}
+          compact={compactViewer}
           onNumPagesChange={setNumPages}
-          cropMode={cropMode}
+          onOverlayClick={onOverlayClick}
+          /*
+           * The selection tool reuses the EXISTING crop interaction
+           * (`cropMode`) so region selection stays wired to the current
+           * crop-compare behaviour instead of a parallel implementation.
+           */
+          cropMode={tool === "select" || cropMode}
           onCropComplete={onCropComplete}
         />
       </Box>

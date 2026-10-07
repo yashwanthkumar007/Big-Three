@@ -1,4 +1,4 @@
-opencv-python
+﻿opencv-python
 numpy
 scikit-image
 PyMuPDF
@@ -13,3 +13,5 @@ azure-cosmos
 azure-storage-blob
 azure-identity
 reportlab
+zxing-cpp>=2.2
+pylibdmtx>=0.1.10

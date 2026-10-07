@@ -124,6 +124,9 @@ def build_report(master_path: str, sample_path: str, result: dict, output_dir: s
             "master_box": _scale_bbox(f.get("master_bbox"), dpi),
             "sample_box": _scale_bbox(f.get("sample_bbox"), dpi),
             "source": f.get("source", "pymupdf"),
+            "barcode_type": f.get("barcode_type"),
+            "decoded_value": f.get("decoded_value"),
+            "grade": f.get("grade"),
         })
 
     # NOTE: grouped/suppressed Location shifts (dominant global page

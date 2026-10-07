@@ -28,6 +28,8 @@ from flask import Flask, request, jsonify, send_from_directory, render_template_
 
 sys.path.append(os.path.dirname(__file__))
 from src.inspection_registry import get_inspection_config
+# Barcode Inspection lives in one self-contained module at the project root.
+from barcode_inspection import InspectionCancelled, register_blueprint  # noqa: E402
 from src.pipelines.report_builder import build_report, render_page
 from src.pipelines.comparison_pipeline import run_crop_text_inspection
 import pandas as pd
@@ -100,12 +102,14 @@ from src.audit_constants import (
     MODULE_AUTHENTICATION,
     MODULE_USER_MANAGEMENT,
     MODULE_TEXT_INSPECTION,
+    MODULE_BARCODE_INSPECTION,
     MODULE_REPORT,
     MODULE_SYSTEM_SETUP,
     MODULE_AUDIT_TRAIL,
     STATUS_SUCCESS,
     STATUS_FAILED,
     STATUS_WARNING,
+    STATUS_CANCELLED,
 )
 
 app = Flask(__name__)
@@ -114,6 +118,72 @@ UPLOAD_ROOT = os.path.join("webapp_uploads")
 OUTPUT_ROOT = os.path.join("webapp_outputs")
 os.makedirs(UPLOAD_ROOT, exist_ok=True)
 os.makedirs(OUTPUT_ROOT, exist_ok=True)
+
+# Barcode Inspection's own async API (create / poll / cancel). Registered on the
+# same app so the React client can use either the dedicated endpoints or the
+# existing /api/inspect flow. The auth hook resolves lazily because
+# _authenticated_identity is defined further down this module.
+def _barcode_auth_guard():
+    # The barcode blueprint's guard contract is a Flask error response or
+    # None. `_authenticated_identity` returns `(user, error)`, so returning its
+    # tuple directly makes Flask treat successful authentication as an invalid
+    # response and prevents the barcode job from ever being created.
+    _, error = _authenticated_identity()
+    return error
+
+
+def _barcode_state_mirror(job):
+    """Keep the persisted inspection record in step with a background job.
+
+    Barcode Inspection runs on its own worker thread so Start can return
+    immediately, which means the Cosmos record would otherwise sit at
+    "uploaded" for the whole run. This hook mirrors the job's real
+    status/stage onto that record so the dashboard and history stay correct.
+
+    Called best-effort from the job thread: it must never raise and must never
+    be on the critical path of an inspection. `record_id` is the caller's own
+    persisted inspection id, and is absent when the job was started from the
+    legacy single-file flow (where there is no record to update).
+    """
+    record_id = getattr(job, "record_id", None)
+    if not record_id:
+        return
+
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    updates = {"stage": job.stage, "barcodeJobId": job.id}
+
+    if job.status == "processing":
+        updates.update(status="processing", startedAt=job.started_at or now)
+    elif job.status == "completed":
+        updates.update(
+            status="completed",
+            stage="inspection_complete",
+            completedAt=job.completed_at or now,
+            barcodeCount=job.barcode_count,
+        )
+    elif job.status == "cancelled":
+        updates.update(status="cancelled", completedAt=job.completed_at or now)
+    elif job.status == "failed":
+        updates.update(
+            status="failed",
+            failedReason=job.error or "Barcode inspection failed during processing.",
+            completedAt=job.completed_at or now,
+        )
+
+    try:
+        _update_inspection_status(record_id, **updates)
+    except Exception as exc:  # pragma: no cover - storage must not break a run
+        logger.warning(
+            "[BARCODE] State mirror failed for %s: %s", record_id, exc
+        )
+
+
+register_blueprint(
+    app,
+    UPLOAD_ROOT,
+    authenticate=_barcode_auth_guard,
+    on_state_change=_barcode_state_mirror,
+)
 
 # The upload-time preview is ONLY a fit-to-screen thumbnail shown before an
 # inspection runs — the React client renders the PDF itself via pdf.js and
@@ -1475,6 +1545,33 @@ VALID_INSPECTION_STATUSES = {
     "uploaded", "submitted", "processing", "completed", "failed", "cancelled",
 }
 
+# ---------------------------------------------------------------------------
+# Cancellation registry
+# ---------------------------------------------------------------------------
+# /api/inspect runs synchronously inside the request thread, so "Cancel
+# Inspection" sets a flag here and the running pipeline aborts at its next
+# stage boundary. The uploaded file and the inspection record are deliberately
+# left untouched by a cancellation.
+_CANCEL_REQUESTED: set[str] = set()
+_CANCEL_LOCK = threading.Lock()
+
+
+def request_inspection_cancel(inspection_id: str) -> None:
+    """Flag a running inspection for cancellation."""
+    with _CANCEL_LOCK:
+        _CANCEL_REQUESTED.add(inspection_id)
+
+
+def clear_inspection_cancel(inspection_id: str) -> None:
+    """Clear a cancellation flag once the run has finished."""
+    with _CANCEL_LOCK:
+        _CANCEL_REQUESTED.discard(inspection_id)
+
+
+def _is_cancel_requested(inspection_id: str) -> bool:
+    with _CANCEL_LOCK:
+        return inspection_id in _CANCEL_REQUESTED
+
 
 def _safe_blob_name(name: str) -> str:
     """Sanitize a user-supplied file name for use inside a blob path."""
@@ -1521,6 +1618,12 @@ def _inspection_to_client(record: dict, include_result: bool = False) -> dict:
         "completedAt": record.get("completedAt"),
         "failedReason": record.get("failedReason"),
         "resultId": record.get("resultId"),
+        # Real processing stage reported by the engine (barcode only today).
+        "stage": record.get("stage"),
+        # Barcode Inspection is a SINGLE-FILE workflow: `inspectionFile` is the
+        # one uploaded document, so the client never has to fake a Master/Sample
+        # pair for it.
+        "inspectionFile": record.get("masterFile"),
         # Full result (with the stored report) is only meaningful on the
         # single-inspection payload; the list keeps it for simplicity since
         # the list query already returns complete records.
@@ -1610,7 +1713,11 @@ def api_inspections():
     master = request.files.get("master")
     sample = request.files.get("sample")
     inspection_type = (request.form.get("inspectionType") or "text").strip().lower()
-    if not master or not sample:
+    if not master:
+        return jsonify({"error": "master file is required"}), 400
+    if inspection_type == "barcode" and not sample:
+        sample = master
+    if not sample:
         return jsonify({"error": "master and sample files are required"}), 400
 
     inspection_id = _new_inspection_id()
@@ -1818,6 +1925,68 @@ def api_inspection_by_id(inspection_id: str):
         return jsonify({"deleted": True, "inspectionId": inspection_id}), 200
 
     return jsonify(_inspection_to_client(record, include_result=True)), 200
+
+
+@app.route("/api/inspections/<inspection_id>/cancel", methods=["POST"])
+def api_cancel_inspection(inspection_id: str):
+    """Cancel a running inspection (owner-only).
+
+    The uploaded file and the inspection record are deliberately preserved —
+    cancellation only stops the run and marks the record `cancelled`, so the
+    user can return to the document viewer and start again.
+    """
+    user, error = _authenticated_identity()
+    if error:
+        return error
+
+    try:
+        record = _get_inspection_record(inspection_id)
+    except Exception as exc:
+        logger.error("[INSPECTIONS] Cancel fetch failed for %s: %s", inspection_id, exc)
+        return jsonify({"error": "Failed to load the inspection."}), 500
+
+    if not record or record.get("deleted"):
+        return jsonify({"error": "Inspection not found."}), 404
+    if record.get("userId") != user.get("id", ""):
+        return jsonify({"error": "You do not have access to this inspection."}), 403
+
+    if record.get("status") in ("completed", "failed", "cancelled"):
+        return jsonify({
+            "cancelled": True,
+            "inspectionId": inspection_id,
+            "status": record.get("status"),
+            "alreadyFinished": True,
+        }), 200
+
+    # Flag the run so the pipeline aborts at its next stage boundary.
+    request_inspection_cancel(inspection_id)
+
+    try:
+        _update_inspection_status(
+            inspection_id,
+            status="cancelled",
+            completedAt=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        )
+    except Exception as exc:
+        logger.warning("[INSPECTIONS] Cancel status update failed for %s: %s", inspection_id, exc)
+
+    try:
+        log_from_authenticated_user(
+            event=INSPECTION_CANCELLED,
+            action="Cancel Inspection",
+            application=APPLICATION_MEDINSPECT,
+            module=MODULE_BARCODE_INSPECTION,
+            authenticated_user=user,
+            status=STATUS_CANCELLED,
+            description=f"Inspection cancelled. Inspection ID={inspection_id}",
+            entity_type="Inspection",
+            entity_id=inspection_id,
+            inspection_id=inspection_id,
+        )
+    except Exception:
+        pass  # Audit failure must never block the cancellation
+
+    return jsonify({"cancelled": True, "inspectionId": inspection_id}), 200
 
 
 @app.route("/api/inspections/<inspection_id>/file", methods=["GET"])
@@ -2067,8 +2236,66 @@ def api_inspect():
             )
         return jsonify({"error": "Both Master and Sample must be uploaded first"}), 400
 
+    # Barcode Inspection sends its full configuration object (profile,
+    # resolution, enableOverprint, pages) from the configuration panel. It is
+    # only forwarded to pipelines that accept it, so the other inspection types
+    # are unaffected.
+    barcode_config = data.get("barcode_config")
+
+    def _barcode_progress(stage: str) -> bool:
+        """Persist the real barcode stage and honour cancellation.
+
+        Returns ``False`` when the user cancelled, which makes the pipeline
+        abort with InspectionCancelled.
+        """
+        if inspection_id:
+            try:
+                _update_inspection_status(inspection_id, stage=stage)
+            except Exception as exc:
+                logger.warning("[INSPECT] Stage update failed for %s: %s", inspection_id, exc)
+        return not (inspection_id and _is_cancel_requested(inspection_id))
+
     try:
-        result = config.pipeline(master_path, sample_path, filters=filters)
+        if inspection_type == "barcode":
+            if inspection_id:
+                _update_inspection_status(inspection_id, stage="barcode_detection")
+            result = config.pipeline(
+                master_path,
+                sample_path,
+                filters=filters,
+                barcode_config=barcode_config,
+                progress=_barcode_progress,
+            )
+        else:
+            result = config.pipeline(master_path, sample_path, filters=filters)
+    except InspectionCancelled:
+        # The user pressed "Cancel Inspection": stop the run, mark the record
+        # cancelled and leave both the uploaded file and the record in place.
+        if inspection_id:
+            logger.info("[INSPECT] Cancelled by user: %s", inspection_id)
+            try:
+                _update_inspection_status(
+                    inspection_id,
+                    status="cancelled",
+                    completedAt=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                )
+            except Exception as exc:
+                logger.warning("[INSPECT] Cancel status update failed for %s: %s", inspection_id, exc)
+            log_from_authenticated_user(
+                event=INSPECTION_CANCELLED,
+                action="Cancel Inspection",
+                application=APPLICATION_MEDINSPECT,
+                module=MODULE_BARCODE_INSPECTION,
+                authenticated_user=caller,
+                status=STATUS_CANCELLED,
+                description=f"Inspection cancelled by user. Inspection ID={inspection_id}",
+                entity_type="Inspection",
+                entity_id=inspection_id,
+                inspection_id=inspection_id,
+            )
+        if inspection_id:
+            clear_inspection_cancel(inspection_id)
+        return jsonify({"cancelled": True, "inspectionId": inspection_id}), 200
     except Exception as e:
         if inspection_id:
             # Store a safe, generic failure reason — no internal details.
@@ -2095,6 +2322,12 @@ def api_inspect():
         return jsonify({"error": f"{config.label} failed: {str(e)}"}), 500
 
     output_dir = os.path.join(OUTPUT_ROOT, session_id)
+
+    if inspection_id:
+        try:
+            _update_inspection_status(inspection_id, stage="saving_results")
+        except Exception as exc:
+            logger.warning("[INSPECT] Stage update failed for %s: %s", inspection_id, exc)
 
     try:
         report = build_report(master_path, sample_path, result, output_dir)
@@ -2124,6 +2357,7 @@ def api_inspect():
             _update_inspection_status(
                 inspection_id,
                 status="completed",
+                stage="inspection_complete",
                 completedAt=now,
                 resultId=result_id,
                 result={"resultId": result_id, "report": report},

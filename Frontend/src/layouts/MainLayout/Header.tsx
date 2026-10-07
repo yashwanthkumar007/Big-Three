@@ -95,8 +95,9 @@ export default function Header() {
     {
       name: "Barcode Inspection",
       icon: <BarcodeIcon size={22} />,
-      route: "/workspace/barcode",
-      available: false
+      // Matches the route registered in routes/index.tsx ("barcode/upload").
+      route: "/workspace/barcode/upload",
+      available: true
     },
     {
       name: "Notes Inspection",
@@ -125,8 +126,7 @@ export default function Header() {
       }}
     >
       <Toolbar sx={{ height: 72 }}>
-        {/* Left Section — spacing 0 so the logo and the "MedInspect"
-            wordmark sit flush with no gap between them. */}
+        {/* Left Section */}
         <Stack
           direction="row"
           spacing={0}
@@ -149,6 +149,7 @@ export default function Header() {
              color: "white",
              cursor: "pointer",
              userSelect: "none",
+             ml: 1,
              transition: "opacity .2s ease",
 
              "&:hover": {

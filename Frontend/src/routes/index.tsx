@@ -125,7 +125,9 @@ export const router = createBrowserRouter([
         element: <BrailleInspectionPage />,
       },
       {
-        path: "barcode",
+        // Barcode Inspection uploads a single source file; `UploadCard` runs in
+        // barcode mode and reuses it as both master and sample.
+        path: "barcode/upload",
         element: <BarcodeInspectionPage />,
       },
       {

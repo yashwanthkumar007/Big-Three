@@ -45,6 +45,8 @@ export default function UploadCard({
     setInspectionType
   } = useUploadStore();
 
+  const isBarcodeMode = inspectionType === "barcode";
+
   /* -------------------------------------------------------------------------- */
   /*                                  States                                    */
   /* -------------------------------------------------------------------------- */
@@ -189,9 +191,9 @@ export default function UploadCard({
 
   const isUploadEnabled =
     master !== null &&
-    sample !== null &&
+    (isBarcodeMode || sample !== null) &&
     masterError === "" &&
-    sampleError === "";
+    (!isBarcodeMode ? sampleError === "" : true);
 
   /* -------------------------------------------------------------------------- */
   /*                           Upload Button Handler                            */
@@ -200,8 +202,11 @@ export default function UploadCard({
   const handleUpload = () => {
     if (!isUploadEnabled) return;
 
-    setMasterFile(master);
-    setSampleFile(sample);
+    const resolvedMaster = master;
+    const resolvedSample = isBarcodeMode ? master : sample;
+
+    setMasterFile(resolvedMaster);
+    setSampleFile(resolvedSample);
     setInspectionType(inspectionType);
 
     navigate(`/workspace/${inspectionType}`);
@@ -417,173 +422,177 @@ export default function UploadCard({
       )}
 
       {/* ---------------- PART 3 STARTS HERE ---------------- */}
-            {/* ===================================================== */}
-      {/* Hidden Sample Input                                   */}
-      {/* ===================================================== */}
+            {!isBarcodeMode && (
+        <>
+          {/* ===================================================== */}
+          {/* Hidden Sample Input                                   */}
+          {/* ===================================================== */}
 
-      <input
-        hidden
-        ref={sampleInputRef}
-        type="file"
-        accept={getFileTypesForInspection(inspectionType).join(",")}
-        onChange={onSampleInputChange}
-      />
+          <input
+            hidden
+            ref={sampleInputRef}
+            type="file"
+            accept={getFileTypesForInspection(inspectionType).join(",")}
+            onChange={onSampleInputChange}
+          />
 
-      {/* ===================================================== */}
-      {/* Sample Upload Box                                     */}
-      {/* ===================================================== */}
+          {/* ===================================================== */}
+          {/* Sample Upload Box                                     */}
+          {/* ===================================================== */}
 
-      <Box
-        onClick={openSampleBrowser}
-        onDragOver={(event) => {
-          event.preventDefault();
-        }}
-        onDrop={(event) => {
-          event.preventDefault();
+          <Box
+            onClick={openSampleBrowser}
+            onDragOver={(event) => {
+              event.preventDefault();
+            }}
+            onDrop={(event) => {
+              event.preventDefault();
 
-          const file = event.dataTransfer.files[0];
+              const file = event.dataTransfer.files[0];
 
-          if (!file) return;
+              if (!file) return;
 
-          handleSampleFile(file);
-        }}
-        sx={{
-          height: sample ? 210 : 170,
+              handleSampleFile(file);
+            }}
+            sx={{
+              height: sample ? 210 : 170,
 
-          border:
-            sampleError !== ""
-              ? "2px dashed #d32f2f"
-              : sample
-              ? "2px dashed #2A276E"
-              : "2px dashed #BDBDBD",
+              border:
+                sampleError !== ""
+                  ? "2px dashed #d32f2f"
+                  : sample
+                  ? "2px dashed #2A276E"
+                  : "2px dashed #BDBDBD",
 
-          borderRadius: 2,
+              borderRadius: 2,
 
-          cursor: "pointer",
+              cursor: "pointer",
 
-          display: "flex",
+              display: "flex",
 
-          justifyContent: "center",
+              justifyContent: "center",
 
-          alignItems: "center",
+              alignItems: "center",
 
-          transition: ".25s",
+              transition: ".25s",
 
-          mb: 3,
+              mb: 3,
 
-          "&:hover": {
-            bgcolor: "#F7F7FC",
+              "&:hover": {
+                bgcolor: "#F7F7FC",
 
-            borderColor: "#2A276E"
-          }
-        }}
-      >
-        {!sample ? (
-          <Stack
-            spacing={1.5}
-            sx={{ alignItems: "center" }}
+                borderColor: "#2A276E"
+              }
+            }}
           >
-            <CloudUploadOutlinedIcon
-              sx={{
-                fontSize: 55,
-                color: "#2A276E"
-              }}
-            />
-
-            <Typography 
-             sx={{ fontWeight: 500 }}
-            >
-              Drop Sample File
-            </Typography>
-
-            <Typography variant="body2">
-              or{" "}
-              <Link
-                component="button"
-                underline="hover"
-                color="#2A276E"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  openSampleBrowser();
-                }}
+            {!sample ? (
+              <Stack
+                spacing={1.5}
+                sx={{ alignItems: "center" }}
               >
-                Browse
-              </Link>
-            </Typography>
+                <CloudUploadOutlinedIcon
+                  sx={{
+                    fontSize: 55,
+                    color: "#2A276E"
+                  }}
+                />
 
+                <Typography 
+                 sx={{ fontWeight: 500 }}
+                >
+                  Drop Sample File
+                </Typography>
+
+                <Typography variant="body2">
+                  or{" "}
+                  <Link
+                    component="button"
+                    underline="hover"
+                    color="#2A276E"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      openSampleBrowser();
+                    }}
+                  >
+                    Browse
+                  </Link>
+                </Typography>
+
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                >
+                  PDF • DOC • DOCX • AI • TXT • RTF • XLS • XLSX • XML
+                </Typography>
+              </Stack>
+            ) : (
+              <Stack
+                spacing={2}
+                sx={{ alignItems: "center",
+                  pt: 1,
+                  pb: 2
+                 }}
+              >
+                <DescriptionOutlinedIcon
+                  sx={{
+                    fontSize: 52,
+                    color: "#2A276E"
+                  }}
+                />
+
+                <Typography
+                  variant="body1"
+                  noWrap
+                  title={sample.name}
+                  sx={{
+                    fontWeight: 600,
+                    textAlign: "center",
+                    maxWidth: 420,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap"
+                  }}
+                >
+                  {truncateFileName(sample.name)}
+                </Typography>
+
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                >
+                  {(sample.size / (1024 * 1024)).toFixed(2)} MB
+                </Typography>
+
+                <Button
+                  color="error"
+                  startIcon={<DeleteOutlineOutlinedIcon />}
+                  onClick={(event) => {
+                    event.stopPropagation();
+
+                    removeSample();
+                  }}
+                >
+                  Remove
+                </Button>
+              </Stack>
+            )}
+          </Box>
+
+          {/* ===================================================== */}
+          {/* Sample Error                                          */}
+          {/* ===================================================== */}
+
+          {sampleError && (
             <Typography
-              variant="caption"
-              color="text.secondary"
-            >
-              PDF • DOC • DOCX • AI • TXT • RTF • XLS • XLSX • XML
-            </Typography>
-          </Stack>
-        ) : (
-          <Stack
-            spacing={2}
-            sx={{ alignItems: "center",
-              pt: 1,   // add top spacing
-    pb: 2
-             }}
-          >
-            <DescriptionOutlinedIcon
-              sx={{
-                fontSize: 52,
-                color: "#2A276E"
-              }}
-            />
-
-            <Typography
-              variant="body1"
-              noWrap
-              title={sample.name}
-              sx={{
-                fontWeight: 600,
-                textAlign: "center",
-                maxWidth: 420,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap"
-              }}
-            >
-              {truncateFileName(sample.name)}
-            </Typography>
-
-            <Typography
-              variant="caption"
-              color="text.secondary"
-            >
-              {(sample.size / (1024 * 1024)).toFixed(2)} MB
-            </Typography>
-
-            <Button
               color="error"
-              startIcon={<DeleteOutlineOutlinedIcon />}
-              onClick={(event) => {
-                event.stopPropagation();
-
-                removeSample();
+              sx={{
+                mb: 3
               }}
             >
-              Remove
-            </Button>
-          </Stack>
-        )}
-      </Box>
-
-      {/* ===================================================== */}
-      {/* Sample Error                                          */}
-      {/* ===================================================== */}
-
-      {sampleError && (
-        <Typography
-          color="error"
-          sx={{
-            mb: 3
-          }}
-        >
-          {sampleError}
-        </Typography>
+              {sampleError}
+            </Typography>
+          )}
+        </>
       )}
 
       {/* ---------------- PART 4 STARTS HERE ---------------- */}
@@ -654,7 +663,9 @@ export default function UploadCard({
             alignItems: "center"
           }}
         >
-          Please upload one valid Master file and one valid Sample file.
+          {isBarcodeMode
+            ? "Please upload one valid barcode source file."
+            : "Please upload one valid Master file and one valid Sample file."}
         </Typography>
       )}
 

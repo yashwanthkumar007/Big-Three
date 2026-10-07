@@ -6,7 +6,14 @@ import globals from 'globals'
 
 export default [
   {
-    ignores: ['dist'],
+    ignores: [
+      'dist',
+      // Static assets served verbatim by Vite (e.g. the minified PDF.js
+      // worker) are vendored third-party code, not project source.
+      'public/**',
+      // Generated/bundled artifacts are never linted.
+      '**/*.min.*',
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
@@ -27,6 +34,18 @@ export default [
           allowConstantExport: true,
         },
       ],
+    },
+  },
+  {
+    // Maintenance scripts run under Node (require/__dirname), not the browser.
+    files: ['**/*.cjs'],
+    languageOptions: {
+      globals: globals.node,
+    },
+    rules: {
+      // CommonJS scripts load Node built-ins with require() by design;
+      // this rule targets ES module code.
+      '@typescript-eslint/no-require-imports': 'off',
     },
   },
 ]

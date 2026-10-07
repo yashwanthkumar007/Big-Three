@@ -18,6 +18,175 @@ import "react-pdf/dist/Page/TextLayer.css";
 
 import type { InspectionDifference } from "./InspectionResults";
 import type { BoundingBox } from "@/shared/api/inspectionApi";
+import {
+  buildVerificationRows,
+  NOT_AVAILABLE,
+} from "@/shared/utils/barcodeVerificationFormat";
+
+/** Label / value colours inside the dark hover card. */
+const HOVER_LABEL_COLOR = "#C9CBE8";
+const HOVER_VALUE_COLOR = "#FFFFFF";
+const HOVER_MUTED_COLOR = "#9A9CC4";
+
+type BarcodeHoverCardProps = {
+  difference: InspectionDifference | null | undefined;
+};
+
+/**
+ * Renders the "Barcode N / Decoded Value / Type / Grade / <metrics>" card.
+ *
+ * Kept as a stable two-column grid rather than a paragraph so the label and
+ * value stay aligned down the card, and every row reads at a glance on hover.
+ * Rows the engine could not measure render "N/A" (dimmed) rather than being
+ * dropped, so the reader can tell "not measurable" from "not reported".
+ */
+/**
+ * Hover card for a barcode finding.
+ *
+ * Exported so the barcode results table can show the exact same card on row
+ * hover as the PDF overlay does, rather than the browser's plain text tooltip.
+ */
+export function BarcodeHoverCard({ difference }: BarcodeHoverCardProps) {
+  const verification = difference?.barcodeVerification ?? null;
+  const metricRows = buildVerificationRows(verification);
+
+  // Any non-barcode difference (text / graphics / braille / notes) keeps the
+  // original Difference #N summary, so nothing else in the app changes.
+  if (difference?.type !== "Barcode") {
+    return (
+      <Box>
+        <Typography variant="caption" sx={{ fontWeight: 700, color: "#FFFFFF", display: "block" }}>
+          Difference #{difference?.id}
+        </Typography>
+        <Typography variant="caption" sx={{ display: "block", color: "#E8E8F5", mb: 0.5 }}>
+          {difference?.comment || difference?.type || "No reason available"}
+        </Typography>
+        <Typography variant="caption" sx={{ display: "block", color: "#D0D0E8", fontWeight: 600 }}>
+          Original:{" "}
+          <Box component="span" sx={{ fontWeight: 400, color: "#E8E8F5" }}>
+            {difference?.master || "—"}
+          </Box>
+        </Typography>
+        <Typography variant="caption" sx={{ display: "block", color: "#D0D0E8", fontWeight: 600 }}>
+          Sample:{" "}
+          <Box component="span" sx={{ fontWeight: 400, color: "#E8E8F5" }}>
+            {difference?.sample || "—"}
+          </Box>
+        </Typography>
+      </Box>
+    );
+  }
+
+  return (
+    <Box>
+      <Typography variant="caption" sx={{ fontWeight: 700, color: "#FFFFFF", display: "block", mb: 0.5 }}>
+        Barcode {difference.id}
+      </Typography>
+
+      {/* Identity block: decoded value / type / grade. */}
+      <Box
+        component="dl"
+        sx={{ m: 0, display: "grid", gridTemplateColumns: "auto 1fr", columnGap: 1, rowGap: 0.25 }}
+      >
+        <Typography component="dt" variant="caption" sx={hoverLabelSx}>
+          Decoded Value:
+        </Typography>
+        <Typography component="dd" variant="caption" sx={hoverValueSx}>
+          {difference.decodedValue || NOT_AVAILABLE}
+        </Typography>
+
+        <Typography component="dt" variant="caption" sx={hoverLabelSx}>
+          Type:
+        </Typography>
+        <Typography component="dd" variant="caption" sx={hoverValueSx}>
+          {difference.barcodeType || NOT_AVAILABLE}
+        </Typography>
+
+        <Typography component="dt" variant="caption" sx={hoverLabelSx}>
+          Grade:
+        </Typography>
+        <Typography component="dd" variant="caption" sx={hoverValueSx}>
+          {difference.grade || NOT_AVAILABLE}
+        </Typography>
+      </Box>
+
+      {/* Verification metrics, separated by a hairline. */}
+      {metricRows.length > 0 && (
+        <Box
+          component="dl"
+          sx={{
+            m: 0,
+            mt: 0.5,
+            pt: 0.5,
+            borderTop: `1px solid ${HOVER_MUTED_COLOR}`,
+            display: "grid",
+            gridTemplateColumns: "auto 1fr",
+            columnGap: 1,
+            rowGap: 0.25,
+          }}
+        >
+          {metricRows.map((row) => (
+            <Box key={row.key} sx={hoverGridSpan}>
+              <Typography component="dt" variant="caption" sx={hoverLabelSx}>
+                {row.label}:
+              </Typography>
+              <Typography
+                component="dd"
+                variant="caption"
+                sx={{
+                  ...hoverValueSx,
+                  textAlign: "right",
+                  // Dim "N/A" so real measurements stay visually dominant.
+                  color: row.value === NOT_AVAILABLE ? HOVER_MUTED_COLOR : HOVER_VALUE_COLOR,
+                }}
+              >
+                {row.value}
+              </Typography>
+            </Box>
+          ))}
+        </Box>
+      )}
+
+      {/* The engine's own disclaimer travels with the numbers, so a graded
+          figure is never read as a certified measurement. */}
+      {verification?.disclaimer && (
+        <Typography
+          variant="caption"
+          sx={{ display: "block", mt: 0.5, fontSize: 10, fontStyle: "italic", color: HOVER_MUTED_COLOR }}
+        >
+          {verification.disclaimer}
+        </Typography>
+      )}
+
+      {verification?.error && (
+        <Typography variant="caption" sx={{ display: "block", mt: 0.5, color: "#FFB4AB" }}>
+          {verification.error}
+        </Typography>
+      )}
+    </Box>
+  );
+}
+
+const hoverLabelSx = {
+  color: HOVER_LABEL_COLOR,
+  fontSize: 11,
+  lineHeight: 1.5,
+  m: 0,
+  whiteSpace: "nowrap" as const,
+};
+
+const hoverValueSx = {
+  color: HOVER_VALUE_COLOR,
+  fontSize: 11,
+  fontWeight: 600,
+  lineHeight: 1.5,
+  m: 0,
+  wordBreak: "break-word" as const,
+};
+
+const hoverGridSpan = {
+  display: "contents" as const,
+};
 
 pdfjs.GlobalWorkerOptions.workerSrc =
   "/pdf.worker.min.mjs";
@@ -31,7 +200,16 @@ type PdfViewerProps = {
   naturalHeight?: number;
   zeroBasedPageIndex?: boolean;
   pageNumber?: number;
+  /**
+   * When true the externally managed `pageNumber` prop always wins over the
+   * selected difference's own page. Set by the barcode result page, which
+   * moves the page itself whenever a finding is selected and must still let
+   * the user page through the document while a finding stays selected.
+   */
+  pageFollowsParent?: boolean;
   zoom?: number;
+  compact?: boolean;
+  onOverlayClick?: (difference: InspectionDifference) => void;
   onNumPagesChange?: (numPages: number) => void;
   /**
    * Crop Compare mode — when true (master side only), the user can drag
@@ -42,6 +220,12 @@ type PdfViewerProps = {
    */
   cropMode?: boolean;
   onCropComplete?: (page0Based: number, box: BoundingBox) => void;
+  /**
+   * Development-only: render a coordinate debug panel over the page showing
+   * the backend bbox, the coordinate basis, the page dimensions, the PDF.js
+   * viewport size and the derived scale. Compiled out of production builds.
+   */
+  showDebugOverlay?: boolean;
 };
 
 const getBoundingBox = (
@@ -67,10 +251,14 @@ export default function PdfViewer({
   naturalHeight,
   zeroBasedPageIndex = false,
   pageNumber: requestedPageNumberFromToolbar,
+  pageFollowsParent = false,
   zoom = 100,
+  compact = false,
+  onOverlayClick,
   onNumPagesChange,
   cropMode,
   onCropComplete,
+  showDebugOverlay = false,
 }: PdfViewerProps) {
   const containerRef =
     useRef<HTMLDivElement | null>(null);
@@ -130,24 +318,8 @@ export default function PdfViewer({
     };
   }, []);
 
-  /*
-   * ------------------------------------------------------------
-   * Get the correct bounding box.
-   *
-   * Master PDF -> masterBox
-   * Sample PDF -> sampleBox
-   * ------------------------------------------------------------
-   */
-  const bbox = getBoundingBox(
-    selectedDifference,
-    side
-  );
-
   const hasSelectedDifference =
     Boolean(selectedDifference);
-
-  const showMissingCoordinatesNotice =
-    hasSelectedDifference && !bbox;
 
   /*
    * ------------------------------------------------------------
@@ -163,10 +335,19 @@ export default function PdfViewer({
         : selectedDifference.page
       : null;
 
+  /*
+   * By default the viewer follows the selected difference's own page.
+   * `pageFollowsParent` callers (the barcode result page) manage the page
+   * themselves: the prop page wins so toolbar prev/next page navigation
+   * keeps working even while a finding stays selected.
+   */
   const requestedPageNumber =
-    requestedPageNumberFromDifference !== null
-      ? requestedPageNumberFromDifference
-      : requestedPageNumberFromToolbar ?? 1;
+    pageFollowsParent &&
+    typeof requestedPageNumberFromToolbar === "number"
+      ? requestedPageNumberFromToolbar
+      : requestedPageNumberFromDifference !== null
+        ? requestedPageNumberFromDifference
+        : requestedPageNumberFromToolbar ?? 1;
 
   /*
    * ------------------------------------------------------------
@@ -179,6 +360,33 @@ export default function PdfViewer({
     requestedPageNumber <= numPages
       ? requestedPageNumber
       : 1;
+
+  /*
+   * The highlight is drawn inside the wrapper of the page that is currently
+   * displayed, so its box is only handed out when the selected difference
+   * actually lives on that page - otherwise paging around with a finding
+   * selected would paint that finding's coordinates onto the wrong page.
+   */
+  const differenceIsOnDisplayedPage =
+    requestedPageNumberFromDifference === null ||
+    requestedPageNumberFromDifference === pageNumber;
+
+  /*
+   * ------------------------------------------------------------
+   * Get the correct bounding box.
+   *
+   * Master PDF -> masterBox
+   * Sample PDF -> sampleBox
+   * ------------------------------------------------------------
+   */
+  const bbox = differenceIsOnDisplayedPage
+    ? getBoundingBox(selectedDifference, side)
+    : null;
+
+  const showMissingCoordinatesNotice =
+    hasSelectedDifference &&
+    differenceIsOnDisplayedPage &&
+    !bbox;
 
   /*
    * ------------------------------------------------------------
@@ -203,6 +411,53 @@ export default function PdfViewer({
   } | null>(null);
 
   const cropEnabled = Boolean(cropMode) && side === "master";
+
+  /*
+   * Pan mode (the hand tool). Dragging pans the scroll container that
+   * holds the page, so the user can move around a zoomed-in document.
+   *
+   * Panning is exactly the inverse of the crop tool, so it is derived rather
+   * than stored in state — there is no independent value to keep in sync.
+   */
+  const panEnabled = !cropEnabled;
+  const panOriginRef = useRef<{ x: number; y: number } | null>(null);
+  const panScrollOriginRef = useRef<{ x: number; y: number } | null>(null);
+
+  const handlePanMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (!panEnabled || cropEnabled || event.button !== 0) {
+      return;
+    }
+
+    const scroller = containerRef.current;
+
+    if (!scroller) {
+      return;
+    }
+
+    panOriginRef.current = { x: event.clientX, y: event.clientY };
+    panScrollOriginRef.current = {
+      x: scroller.scrollLeft,
+      y: scroller.scrollTop,
+    };
+  };
+
+  const handlePanMouseMove = (event: React.MouseEvent<HTMLDivElement>) => {
+    const origin = panOriginRef.current;
+    const scrollOrigin = panScrollOriginRef.current;
+    const scroller = containerRef.current;
+
+    if (!origin || !scrollOrigin || !scroller) {
+      return;
+    }
+
+    scroller.scrollLeft = scrollOrigin.x - (event.clientX - origin.x);
+    scroller.scrollTop = scrollOrigin.y - (event.clientY - origin.y);
+  };
+
+  const endPan = () => {
+    panOriginRef.current = null;
+    panScrollOriginRef.current = null;
+  };
 
   const handleCropMouseDown = (event: React.MouseEvent) => {
     if (!cropEnabled || !pageWrapperRef.current) {
@@ -387,12 +642,26 @@ export default function PdfViewer({
     renderedPageHeight,
   ]);
 
+  /*
+   * Reset the scroll position whenever the displayed page has no highlight
+   * to centre on: the selection was cleared (deselect -> viewer zooms back
+   * out), the selected finding has no usable coordinates, or the user paged
+   * away from it. `selectedDifference` is a dependency on purpose so that
+   * clearing the selection resets the view. When a highlight IS present the
+   * scroll-to-highlight effect above centers it instead.
+   */
   useEffect(() => {
-    if (
-      !selectedDifference ||
-      bbox ||
-      !containerRef.current
-    ) {
+    if (!containerRef.current) {
+      return;
+    }
+
+    /*
+     * `selectedDifference` is read here (not just `bbox`) so that clearing
+     * a selection whose bbox was already null still re-runs this effect.
+     */
+    const hasHighlight = Boolean(selectedDifference) && Boolean(bbox);
+
+    if (hasHighlight) {
       return;
     }
 
@@ -431,7 +700,7 @@ export default function PdfViewer({
 
         position: "relative",
 
-        p: 3,
+        p: compact ? 1 : 3,
 
         bgcolor: "#FFFFFF",
       }}
@@ -517,7 +786,10 @@ export default function PdfViewer({
         >
         <Box
           ref={pageWrapperRef}
-          onMouseDown={handleCropMouseDown}
+          onMouseDown={cropEnabled ? handleCropMouseDown : handlePanMouseDown}
+          onMouseMove={handlePanMouseMove}
+          onMouseUp={endPan}
+          onMouseLeave={endPan}
           sx={{
             position: "relative",
             display: "inline-block",
@@ -525,7 +797,7 @@ export default function PdfViewer({
             bgcolor: "#FFFFFF",
             boxShadow:
               "0 2px 8px rgba(0,0,0,0.15)",
-            cursor: cropEnabled ? "crosshair" : "default",
+            cursor: cropEnabled ? "crosshair" : panEnabled ? "grab" : "default",
           }}
         >
           <Page
@@ -548,6 +820,58 @@ export default function PdfViewer({
               );
             }}
           />
+
+          {/* =====================================================
+              COORDINATE DEBUG PANEL (development only)
+              Shows the full chain from the backend bbox to the
+              on-screen position, so a drift can be attributed to
+              exactly one step. Tree-shaken out of production builds.
+              ===================================================== */}
+
+          {import.meta.env.DEV && showDebugOverlay && (
+            <Box
+              data-testid="pdf-coord-debug"
+              sx={{
+                position: "absolute",
+                top: 8,
+                left: 8,
+                zIndex: 30,
+                pointerEvents: "none",
+                bgcolor: "rgba(0,0,0,0.82)",
+                color: "#7CFC7C",
+                fontFamily: "monospace",
+                fontSize: 11,
+                lineHeight: 1.45,
+                p: 1,
+                borderRadius: 1,
+                whiteSpace: "pre",
+              }}
+            >
+              {[
+                `finding      : ${selectedDifference?.id ?? "—"}`,
+                `bbox         : ${
+                  bbox
+                    ? `${bbox.x}, ${bbox.y}, ${bbox.width}, ${bbox.height}`
+                    : "—"
+                }`,
+                `coordSystem  : ${selectedDifference?.coordinateSystem ?? "—"}`,
+                `page         : ${pageNumber}`,
+                `pageSize     : ${naturalWidth ?? "—"} x ${naturalHeight ?? "—"}`,
+                `viewportSize : ${renderedPageWidth ?? "—"} x ${
+                  renderedPageHeight ?? "—"
+                }`,
+                `scaleX/scaleY: ${scaleX.toFixed(4)} / ${scaleY.toFixed(4)}`,
+                `viewportScale: ${(
+                  (renderedPageWidth ?? 0) / (naturalWidth || 1)
+                ).toFixed(4)}`,
+                `zoom         : ${zoom}%`,
+                `devicePixelR : ${typeof window === "undefined" ? "—" : window.devicePixelRatio}`,
+                `overlayCSS   : ${highlightLeft.toFixed(1)}, ${highlightTop.toFixed(
+                  1
+                )} ${highlightWidth.toFixed(1)}x${highlightHeight.toFixed(1)}`,
+              ].join("\n")}
+            </Box>
+          )}
 
           {/* =====================================================
               CROP COMPARE SELECTION RECTANGLE
@@ -579,64 +903,7 @@ export default function PdfViewer({
           {bbox && (
             <Tooltip
               title={
-                <Box>
-                  <Typography
-                    variant="caption"
-                    sx={{
-                      fontWeight: 700,
-                      color: "#FFFFFF",
-                      display: "block",
-                    }}
-                  >
-                    Difference #{selectedDifference?.id}
-                  </Typography>
-                  <Typography
-                    variant="caption"
-                    sx={{
-                      display: "block",
-                      color: "#E8E8F5",
-                      mb: 0.5,
-                    }}
-                  >
-                    {selectedDifference?.comment ||
-                      selectedDifference?.type ||
-                      "No reason available"}
-                  </Typography>
-
-                  <Typography
-                    variant="caption"
-                    sx={{
-                      display: "block",
-                      color: "#D0D0E8",
-                      fontWeight: 600,
-                    }}
-                  >
-                    Original:{" "}
-                    <Box
-                      component="span"
-                      sx={{ fontWeight: 400, color: "#E8E8F5" }}
-                    >
-                      {selectedDifference?.master || "—"}
-                    </Box>
-                  </Typography>
-
-                  <Typography
-                    variant="caption"
-                    sx={{
-                      display: "block",
-                      color: "#D0D0E8",
-                      fontWeight: 600,
-                    }}
-                  >
-                    Sample:{" "}
-                    <Box
-                      component="span"
-                      sx={{ fontWeight: 400, color: "#E8E8F5" }}
-                    >
-                      {selectedDifference?.sample || "—"}
-                    </Box>
-                  </Typography>
-                </Box>
+                <BarcodeHoverCard difference={selectedDifference} />
               }
               arrow
               placement="top"
@@ -647,6 +914,10 @@ export default function PdfViewer({
                     color: "#FFFFFF",
                     border: "1px solid #2A276E",
                     boxShadow: "0 4px 12px rgba(0,0,0,0.25)",
+                    /* The verification card is a tall block; keep it readable
+                       and scrollable instead of letting it run off-screen. */
+                    maxWidth: 320,
+                    whiteSpace: "normal",
                   },
                 },
                 arrow: {
@@ -658,6 +929,11 @@ export default function PdfViewer({
             >
               <Box
                 ref={highlightRef}
+                onClick={() => {
+                  if (selectedDifference) {
+                    onOverlayClick?.(selectedDifference);
+                  }
+                }}
                 sx={{
                   position: "absolute",
 

@@ -43,8 +43,7 @@ export const INSPECTION_FILE_TYPES: Record<InspectionType, string[]> = {
     ".pdf", ".brf", ".txt",
   ],
   barcode: [
-    ".pdf", ".png", ".jpg", ".jpeg",
-    ".gif", ".bmp", ".tiff", ".tif",
+    ".pdf", ".ai",
   ],
   notes: [
     ".pdf", ".doc", ".docx", ".txt",
@@ -93,6 +92,63 @@ export function getFileTypesForInspection(
   return INSPECTION_FILE_TYPES[inspectionType as InspectionType] ??
     INSPECTION_FILE_TYPES.text;
 }
+
+/**
+ * Human-readable file types for each inspection type, derived from
+ * `INSPECTION_FILE_TYPES` (never hard-coded at the call site).
+ *
+ * Example: `["PDF", "AI"]` — used for the "Supported file types" line and
+ * for building validation messages.
+ */
+export function getFileTypeLabels(
+  inspectionType: InspectionType | string | null | undefined,
+): string[] {
+  return getFileTypesForInspection(inspectionType).map((extension) =>
+    extension.replace(/^\./, "").toUpperCase()
+  );
+}
+
+/**
+ * Comma-separated supported-type list, e.g. "PDF, AI".
+ */
+export function getSupportedFileTypesLabel(
+  inspectionType: InspectionType | string | null | undefined,
+): string {
+  return getFileTypeLabels(inspectionType).join(", ");
+}
+
+/**
+ * Accepted MIME types per extension. Used for MIME-level validation in
+ * addition to the extension check. Browsers frequently report an empty or
+ * generic MIME type for Illustrator files, so the empty string is allowed.
+ */
+export const INSPECTION_MIME_TYPES: Record<string, string[]> = {
+  ".pdf": ["application/pdf"],
+  ".ai": ["application/postscript", "application/illustrator", "application/octet-stream", ""],
+  ".doc": ["application/msword", "application/octet-stream", ""],
+  ".docx": ["application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/zip", "application/octet-stream", ""],
+  ".txt": ["text/plain", "text/csv", "application/octet-stream", ""],
+  ".rtf": ["application/rtf", "text/rtf", "text/plain", "application/octet-stream", ""],
+  ".xml": ["text/xml", "application/xml", "text/plain", "application/octet-stream", ""],
+  ".xls": ["application/vnd.ms-excel", "application/octet-stream", ""],
+  ".xlsx": ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/zip", "application/octet-stream", ""],
+  ".svg": ["image/svg+xml", "text/xml", "text/plain", "application/octet-stream", ""],
+  ".eps": ["application/postscript", "application/octet-stream", ""],
+  ".png": ["image/png"],
+  ".jpg": ["image/jpeg"],
+  ".jpeg": ["image/jpeg"],
+  ".tiff": ["image/tiff"],
+  ".tif": ["image/tiff"],
+  ".gif": ["image/gif"],
+  ".bmp": ["image/bmp", "image/x-ms-bmp"],
+  ".brf": ["text/plain", "application/octet-stream", ""],
+};
+
+/** Maximum upload size in bytes (10 GB). */
+export const MAX_UPLOAD_SIZE_BYTES = 10 * 1024 * 1024 * 1024;
+
+/** Human-readable maximum size used in the UI and validation messages. */
+export const MAX_UPLOAD_SIZE_LABEL = "10GB";
 
 /**
  * Backward-compatible alias for code that only knows about text inspection.
