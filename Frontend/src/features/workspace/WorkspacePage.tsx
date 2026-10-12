@@ -22,8 +22,6 @@ import BarcodeInspectionSidebar from "./components/BarcodeInspectionSidebar";
 
 import InspectionLoading from "./components/InspectionLoading";
 
-import BarcodeInspectionLoading from "./components/BarcodeInspectionLoading";
-
 import BarcodeInspectionResults, {
   type BarcodeResultPageModel,
 } from "./components/BarcodeInspectionResults";
@@ -75,6 +73,7 @@ export default function WorkspacePage() {
     sampleFile,
     inspectionStatus,
     inspectionReport,
+    error: inspectionError,
     differenceFilters,
     barcodeConfig,
     sessionId: storeSessionId,
@@ -578,31 +577,29 @@ export default function WorkspacePage() {
      * never parked on a spinner for the length of the inspection.
      */
     if (isBarcodeInspection) {
-      if (inspectionStatus === "inspecting" && barcodeInspectionId) {
-        return (
-          <BarcodeInspectionResults
-            result={barcodeResultModel}
-            file={masterFile}
-            isFullscreen={isFullscreen}
-            onToggleFullscreen={() => setIsFullscreen((fullscreen) => !fullscreen)}
-            jobStatus={barcodeJob.status ?? "processing"}
-            stageLabel={BARCODE_STAGE_LABELS[barcodeJob.stage]}
-            progress={{
-              currentPage: barcodeJob.currentPage,
-              totalPages: barcodeJob.totalPages,
-            }}
-            error={barcodeJob.error}
-            onCancel={handleCancelBarcode}
-            isCancelling={barcodeJob.isCancelling}
-          />
-        );
-      }
-
       return (
-        <BarcodeInspectionLoading
-          stage={barcodeJob.stage}
-          isCancelling={barcodeJob.isCancelling}
+        <BarcodeInspectionResults
+          result={barcodeResultModel}
+          file={masterFile}
+          isFullscreen={isFullscreen}
+          onToggleFullscreen={() => setIsFullscreen((fullscreen) => !fullscreen)}
+          jobStatus={barcodeJob.status ?? "queued"}
+          stageLabel={
+            inspectionStatus === "uploading"
+              ? "Uploading file..."
+              : BARCODE_STAGE_LABELS[barcodeJob.stage]
+          }
+          progress={
+            barcodeJob.totalPages > 0
+              ? {
+                  currentPage: barcodeJob.currentPage,
+                  totalPages: barcodeJob.totalPages,
+                }
+              : null
+          }
+          error={barcodeJob.error ?? inspectionError}
           onCancel={handleCancelBarcode}
+          isCancelling={barcodeJob.isCancelling}
         />
       );
     }
@@ -627,6 +624,19 @@ export default function WorkspacePage() {
   if (
     inspectionStatus === "failed"
   ) {
+    if (isBarcodeInspection) {
+      return (
+        <BarcodeInspectionResults
+          result={barcodeResultModel}
+          file={masterFile}
+          isFullscreen={isFullscreen}
+          onToggleFullscreen={() => setIsFullscreen((fullscreen) => !fullscreen)}
+          jobStatus="failed"
+          error={barcodeJob.error ?? inspectionError ?? "Barcode inspection failed. Please try again."}
+        />
+      );
+    }
+
     return (
       <InspectionLoading
         inspectionType={
