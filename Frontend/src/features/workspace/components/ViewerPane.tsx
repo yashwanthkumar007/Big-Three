@@ -4,6 +4,7 @@ import { Box, Paper, Typography } from "@mui/material";
  
 import PdfToolbar from "./PdfToolbar";
 import PdfViewer from "./PdfViewer";
+import DocxViewer from "./DocxViewer";
 import type { InspectionDifference } from "./InspectionResults";
 import { truncateFileName } from "@/shared/utils/truncateFileName";
  
@@ -122,7 +123,10 @@ export default function ViewerPane({
       ? clampPage(selectedPageNumber)
       : clampPage(manualPageNumber);
  
+  const isDocx = file.name.toLowerCase().endsWith(".docx");
+
   return (
+
     <Paper
       elevation={0}
       sx={{
@@ -205,6 +209,22 @@ export default function ViewerPane({
           backgroundColor: "#ECECEC",
         }}
       >
+        {isDocx ? (
+        <DocxViewer
+          file={file}
+          pageNumber={effectivePageNumber}
+          zoom={zoom}
+          onNumPagesChange={setNumPages}
+          inspectionType={inspectionType}
+          side={side}
+          selectedDifference={selectedDifference}
+          naturalWidth={naturalWidth}
+          naturalHeight={naturalHeight}
+          zeroBasedPageIndex={zeroBasedPageIndex}
+          cropMode={cropMode}
+          onCropComplete={onCropComplete}
+        />
+      ) : (
         <PdfViewer
           file={file}
           inspectionType={inspectionType}
@@ -219,6 +239,9 @@ export default function ViewerPane({
           cropMode={cropMode}
           onCropComplete={onCropComplete}
         />
+      )}
+
+
       </Box>
     </Paper>
   );
