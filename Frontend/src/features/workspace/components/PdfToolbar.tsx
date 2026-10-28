@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   Box,
@@ -50,6 +50,7 @@ type PdfToolbarProps = {
   zoom?: number;
   onPageChange?: (page: number) => void;
   onZoomChange?: (zoom: number) => void;
+  onRegisterZoomMenu?: (openMenu: (() => void) | null) => void;
   onFitWidth?: () => void;
   onFitPage?: () => void;
 
@@ -58,6 +59,8 @@ type PdfToolbarProps = {
   /** Opens/closes the navigation panel. */
   onToggleSidebar?: () => void;
   sidebarOpen?: boolean;
+  /** Renders page navigation in the top toolbar instead of the bottom one. */
+  pageNavigationAtTop?: boolean;
 
   /** Active drag tool (hand/pan or region selection). */
   tool?: ViewerTool;
@@ -104,10 +107,12 @@ export default function PdfToolbar({
   zoom = 100,
   onPageChange,
   onZoomChange,
+  onRegisterZoomMenu,
   onFitWidth,
   onFitPage,
   onToggleSidebar,
   sidebarOpen = false,
+  pageNavigationAtTop = false,
   tool = "pan",
   onToolChange,
   onDocumentAction,
@@ -125,8 +130,19 @@ export default function PdfToolbar({
   onPageFilterChange,
 }: PdfToolbarProps) {
   const [zoomAnchor, setZoomAnchor] = useState<HTMLElement | null>(null);
+  const zoomButtonRef = useRef<HTMLButtonElement | null>(null);
   const [searchAnchor, setSearchAnchor] = useState<HTMLElement | null>(null);
   const [searchText, setSearchText] = useState("");
+
+  useEffect(() => {
+    if (!onRegisterZoomMenu) return;
+    onRegisterZoomMenu(() => {
+      if (zoomButtonRef.current) {
+        setZoomAnchor(zoomButtonRef.current);
+      }
+    });
+    return () => onRegisterZoomMenu(null);
+  }, [onRegisterZoomMenu]);
 
   const handlePrevious = () => {
     if (pageNumber > 1) {
@@ -224,6 +240,7 @@ export default function PdfToolbar({
           </Tooltip>
 
           <Button
+            ref={zoomButtonRef}
             size="small"
             onClick={(event) => setZoomAnchor(event.currentTarget)}
             aria-haspopup="listbox"
@@ -293,6 +310,41 @@ export default function PdfToolbar({
           </Tooltip>
         </Stack>
 
+        {pageNavigationAtTop && (
+          <Stack
+            direction="row"
+            spacing={0.25}
+            sx={{ alignItems: "center", flexShrink: 0 }}
+          >
+            <Tooltip title="Previous page">
+              <span>
+                <IconButton
+                  size="small"
+                  onClick={handlePrevious}
+                  disabled={pageNumber <= 1}
+                  aria-label="Previous page"
+                >
+                  <SkipPreviousIcon fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
+            <Typography sx={{ fontSize: 12.5, px: 0.5, whiteSpace: "nowrap" }}>
+              {pageNumber} / {Math.max(1, numPages)}
+            </Typography>
+            <Tooltip title="Next page">
+              <span>
+                <IconButton
+                  size="small"
+                  onClick={handleNext}
+                  disabled={pageNumber >= numPages}
+                  aria-label="Next page"
+                >
+                  <SkipNextIcon fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
+          </Stack>
+        )}
 
         {/* ---- Right group: search, document, comments, refresh ---- */}
         <Stack direction="row" spacing={0.25} sx={{ alignItems: "center", flexShrink: 0 }}>
@@ -420,37 +472,43 @@ export default function PdfToolbar({
         }}
       >
         <Stack direction="row" spacing={0.25} sx={{ alignItems: "center", minWidth: 0 }}>
-          <Tooltip title="Previous View">
-            <span>
-              <IconButton
-                size="small"
-                onClick={handlePrevious}
-                disabled={pageNumber <= 1}
-                aria-label="Previous page"
+          {!pageNavigationAtTop && (
+            <>
+              <Tooltip title="Previous page">
+                <span>
+                  <IconButton
+                    size="small"
+                    onClick={handlePrevious}
+                    disabled={pageNumber <= 1}
+                    aria-label="Previous page"
+                  >
+                    <SkipPreviousIcon fontSize="small" />
+                  </IconButton>
+                </span>
+              </Tooltip>
+
+              <Typography
+                sx={{ fontSize: 12.5, px: 0.5, whiteSpace: "nowrap" }}
               >
-                <SkipPreviousIcon fontSize="small" />
-              </IconButton>
-            </span>
-          </Tooltip>
+                {pageNumber} / {Math.max(1, numPages)}
+              </Typography>
 
-          <Typography sx={{ fontSize: 12.5, px: 0.5, whiteSpace: "nowrap" }}>
-            {pageNumber} / {Math.max(1, numPages)}
-          </Typography>
+              <Tooltip title="Next page">
+                <span>
+                  <IconButton
+                    size="small"
+                    onClick={handleNext}
+                    disabled={pageNumber >= numPages}
+                    aria-label="Next page"
+                  >
+                    <SkipNextIcon fontSize="small" />
+                  </IconButton>
+                </span>
+              </Tooltip>
 
-          <Tooltip title="Next View">
-            <span>
-              <IconButton
-                size="small"
-                onClick={handleNext}
-                disabled={pageNumber >= numPages}
-                aria-label="Next page"
-              >
-                <SkipNextIcon fontSize="small" />
-              </IconButton>
-            </span>
-          </Tooltip>
-
-          <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />
+              <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />
+            </>
+          )}
 
           <Tooltip title={isFullscreen ? "Exit Fullscreen" : "Fullscreen"}>
             <span>
@@ -563,4 +621,3 @@ export default function PdfToolbar({
     </>
   );
 }
-

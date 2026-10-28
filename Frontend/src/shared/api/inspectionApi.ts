@@ -6,6 +6,7 @@ import {
 } from "@/shared/config/inspectionConfig";
 import type { InspectionType } from "@/store/uploadStore";
 import type { BarcodeConfig } from "@/shared/config/barcodeInspectionConfig";
+import type { BrailleInspectionOptions } from "@/shared/config/brailleInspectionConfig";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 const INSPECTION_UPLOAD_TIMEOUT_MS = 120_000;
@@ -41,6 +42,8 @@ export type InspectionApiOptions = {
    * Barcode pipeline consumes it.
    */
   barcodeConfig?: BarcodeConfig;
+  /** Braille settings currently supported by the Braille pipeline. */
+  brailleConfig?: Pick<BrailleInspectionOptions, "language">;
   /**
    * Persistent inspection id (created via `createInspection`). When provided,
    * it is used as the engine session id, the file re-upload is skipped (the
@@ -67,6 +70,7 @@ export type Finding = {
   master: string;
   sample: string;
   comment: string;
+  status?: string | null;
   page: number;
   master_box: BoundingBox | null;
   sample_box: BoundingBox | null;
@@ -74,6 +78,16 @@ export type Finding = {
   barcode_type?: string | null;
   decoded_value?: string | null;
   grade?: string | null;
+  braille_metrics?: {
+    lines?: number;
+    characters?: number;
+    dots?: number;
+    dot_h_mm?: number | null;
+    dot_v_mm?: number | null;
+    character_mm?: number | null;
+    word_mm?: number | null;
+    line_mm?: number | null;
+  } | null;
 };
 
 export type ReportPage = {
@@ -88,6 +102,7 @@ export type ReportPage = {
 
 export type InspectionReport = {
   dpi: number;
+  metadata?: { language?: string };
   pages: ReportPage[];
   findings: Finding[];
   suppressed_shifts: { shift: string; count: number }[];
@@ -166,18 +181,20 @@ const identityHeaders = (): Record<string, string> => {
 };
 
 /**
- * Creates a persistent inspection: uploads both files to the backend
- * (Azure Blob Storage) and registers the inspection in Cosmos DB.
+ * Creates a persistent inspection: uploads the provided document files to
+ * the backend (Azure Blob Storage) and registers the inspection in Cosmos DB.
  * Returns the server-issued inspection metadata.
  */
 export async function createInspection(
   masterFile: File,
-  sampleFile: File,
+  sampleFile: File | null,
   inspectionType: string
 ): Promise<InspectionMeta> {
   const formData = new FormData();
   formData.append("master", masterFile);
-  formData.append("sample", sampleFile);
+  if (sampleFile) {
+    formData.append("sample", sampleFile);
+  }
   formData.append("inspectionType", inspectionType);
 
   const response = await axios.post(
@@ -539,7 +556,7 @@ const uploadFile = async (
  */
 export async function startInspection(
   masterFile: File,
-  sampleFile: File,
+  sampleFile: File | null,
   options: InspectionApiOptions = {}
 ): Promise<InspectionRunResult> {
   const inspectionType = options.inspectionType ?? "text";
@@ -566,7 +583,9 @@ export async function startInspection(
       await uploadFile(masterFile, sessionId, "master");
       setStatus(`Loading ${label} — Master...`, 40);
 
-      await uploadFile(sampleFile, sessionId, "sample");
+      if (sampleFile) {
+        await uploadFile(sampleFile, sessionId, "sample");
+      }
     }
     setStatus(`Comparing ${label.toLowerCase()}...`, 80);
 
@@ -579,6 +598,9 @@ export async function startInspection(
         : {}),
       ...(inspectionType === "barcode" && options.barcodeConfig
         ? { barcode_config: options.barcodeConfig }
+        : {}),
+      ...(inspectionType === "braille" && options.brailleConfig
+        ? { braille_config: options.brailleConfig }
         : {}),
     }, {
       // /api/inspect may associate the run with a persisted inspection,

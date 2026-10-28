@@ -7,6 +7,7 @@ import PdfToolbar, {
   type ViewerTool,
 } from "./PdfToolbar";
 import PdfViewer from "./PdfViewer";
+import DocxViewer from "./DocxViewer";
 import type { InspectionDifference } from "./InspectionResults";
  
 type ViewerPaneProps = {
@@ -34,6 +35,14 @@ type ViewerPaneProps = {
   isFullscreen?: boolean;
   onToggleFullscreen?: () => void;
   onOverlayClick?: (difference: InspectionDifference) => void;
+  onRegisterZoomMenu?: (openMenu: (() => void) | null) => void;
+  connectorTargetRect?: {
+    findingId: number;
+    left: number;
+    top: number;
+    right: number;
+    bottom: number;
+  } | null;
   /** Hide the title, duplicate filename, and file size above the toolbar. */
   hideHeader?: boolean;
   /** Reduce the document's inner padding for the single-file barcode viewer. */
@@ -61,6 +70,8 @@ export default function ViewerPane({
   isFullscreen = false,
   onToggleFullscreen,
   onOverlayClick,
+  onRegisterZoomMenu,
+  connectorTargetRect,
   hideHeader = false,
   compactViewer = false,
   onNumPagesChange,
@@ -239,7 +250,10 @@ export default function ViewerPane({
     }
   };
  
+  const isDocx = file.name.toLowerCase().endsWith(".docx");
+
   return (
+
     <Paper
       elevation={0}
       sx={{
@@ -302,6 +316,7 @@ export default function ViewerPane({
         pageNumber={effectivePageNumber}
         numPages={Math.max(1, numPages)}
         zoom={zoom}
+        onRegisterZoomMenu={onRegisterZoomMenu}
         onPageChange={(page) => {
           setManualPageNumber(clampPage(page));
         }}
@@ -346,6 +361,22 @@ export default function ViewerPane({
           backgroundColor: "#ECECEC",
         }}
       >
+        {isDocx ? (
+        <DocxViewer
+          file={file}
+          pageNumber={effectivePageNumber}
+          zoom={zoom}
+          onNumPagesChange={setNumPages}
+          inspectionType={inspectionType}
+          side={side}
+          selectedDifference={selectedDifference}
+          naturalWidth={naturalWidth}
+          naturalHeight={naturalHeight}
+          zeroBasedPageIndex={zeroBasedPageIndex}
+          cropMode={cropMode}
+          onCropComplete={onCropComplete}
+        />
+      ) : (
         <PdfViewer
           file={file}
           inspectionType={inspectionType}
@@ -359,6 +390,7 @@ export default function ViewerPane({
           compact={compactViewer}
           onNumPagesChange={setNumPages}
           onOverlayClick={onOverlayClick}
+          connectorTargetRect={connectorTargetRect}
           /*
            * The selection tool reuses the EXISTING crop interaction
            * (`cropMode`) so region selection stays wired to the current
@@ -367,6 +399,9 @@ export default function ViewerPane({
           cropMode={tool === "select" || cropMode}
           onCropComplete={onCropComplete}
         />
+      )}
+
+
       </Box>
     </Paper>
   );

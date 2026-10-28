@@ -121,7 +121,7 @@ export const router = createBrowserRouter([
         element: <SpellingInspectionPage />,
       },
       {
-        path: "braille",
+        path: "braille/upload",
         element: <BrailleInspectionPage />,
       },
       {

@@ -4,6 +4,10 @@ import {
   createDefaultBarcodeConfig,
   type BarcodeConfig,
 } from "@/shared/config/barcodeInspectionConfig";
+import {
+  DEFAULT_BRAILLE_INSPECTION_OPTIONS,
+  type BrailleInspectionOptions,
+} from "@/shared/config/brailleInspectionConfig";
 
 export type InspectionType =
   | "text"
@@ -108,6 +112,7 @@ interface UploadState {
    * panel and is sent to the backend as `barcode_config` on Inspect.
    */
   barcodeConfig: BarcodeConfig;
+  brailleConfig: BrailleInspectionOptions;
 
   /** Per-difference comment/status selections. Key = difference id. */
   commentSelections: Record<number, string>;
@@ -125,13 +130,16 @@ interface UploadState {
   setError: (error: string | null) => void;
   setDifferenceFilters: (filters: DifferenceFilters) => void;
   setBarcodeConfig: (config: BarcodeConfig) => void;
+  setBrailleConfig: (config: BrailleInspectionOptions) => void;
   /** Merges a partial update into the Barcode Inspection configuration. */
   patchBarcodeConfig: (patch: DeepPartial<BarcodeConfig>) => void;
   /** Restores the documented Barcode Inspection defaults. */
   resetBarcodeConfig: () => void;
+  resetBrailleConfig: () => void;
   setCommentSelections: (selections: Record<number, string>) => void;
   setLevelSelections: (selections: Record<number, string>) => void;
   setCustomComments: (comments: string[]) => void;
+  setDifferenceListState: (state: DifferenceListSyncState) => void;
 
   clearMasterFile: () => void;
   clearSampleFile: () => void;
@@ -144,15 +152,19 @@ interface UploadState {
 
 export const DIFFERENCE_LIST_CHANNEL = "difference-list-sync";
 
+export type DifferenceListSyncState = Pick<
+  UploadState,
+  | "commentSelections"
+  | "levelSelections"
+  | "inspectionReport"
+  | "masterFileName"
+  | "sampleFileName"
+  | "sessionId"
+>;
+
 export type DifferenceListSyncMessage = {
   type: "state-updated";
-  commentSelections: Record<number, string>;
-  levelSelections: Record<number, string>;
-  inspectionReport: InspectionReport | null;
-  masterFileName: string | null;
-  sampleFileName: string | null;
-  sessionId: string | null;
-};
+} & DifferenceListSyncState;
 
 let broadcastChannel: BroadcastChannel | null = null;
 
@@ -167,15 +179,7 @@ function getBroadcastChannel(): BroadcastChannel | null {
 }
 
 export function broadcastStateUpdate(
-  state: Pick<
-    UploadState,
-    | "commentSelections"
-    | "levelSelections"
-    | "inspectionReport"
-    | "masterFileName"
-    | "sampleFileName"
-    | "sessionId"
-  >
+  state: DifferenceListSyncState
 ) {
   const channel = getBroadcastChannel();
   if (!channel) {
@@ -193,6 +197,30 @@ export function broadcastStateUpdate(
   };
 
   channel.postMessage(message);
+}
+
+export function requestDifferenceListState() {
+  getBroadcastChannel()?.postMessage({ type: "state-request" });
+}
+
+export function subscribeToStateRequests(
+  callback: () => void
+): () => void {
+  const channel = getBroadcastChannel();
+  if (!channel) {
+    return () => {};
+  }
+
+  const handler = (event: MessageEvent) => {
+    if (event.data?.type === "state-request") {
+      callback();
+    }
+  };
+
+  channel.addEventListener("message", handler);
+  return () => {
+    channel.removeEventListener("message", handler);
+  };
 }
 
 export function subscribeToStateUpdates(
@@ -232,6 +260,7 @@ export const useUploadStore = create<UploadState>()((set, get) => ({
   error: null,
   differenceFilters: { ...DEFAULT_DIFFERENCE_FILTERS },
   barcodeConfig: createDefaultBarcodeConfig(),
+  brailleConfig: { ...DEFAULT_BRAILLE_INSPECTION_OPTIONS },
   commentSelections: {},
   levelSelections: {},
   customComments: [],
@@ -283,6 +312,11 @@ export const useUploadStore = create<UploadState>()((set, get) => ({
       barcodeConfig: config,
     }),
 
+  setBrailleConfig: (config) =>
+    set({
+      brailleConfig: config,
+    }),
+
   patchBarcodeConfig: (patch) =>
     set((state) => ({
       barcodeConfig: deepMerge(state.barcodeConfig, patch),
@@ -291,6 +325,11 @@ export const useUploadStore = create<UploadState>()((set, get) => ({
   resetBarcodeConfig: () =>
     set({
       barcodeConfig: createDefaultBarcodeConfig(),
+    }),
+
+  resetBrailleConfig: () =>
+    set({
+      brailleConfig: { ...DEFAULT_BRAILLE_INSPECTION_OPTIONS },
     }),
 
   setCommentSelections: (selections) => {
@@ -324,6 +363,16 @@ export const useUploadStore = create<UploadState>()((set, get) => ({
       customComments: comments,
     }),
 
+  setDifferenceListState: (state) =>
+    set({
+      commentSelections: state.commentSelections,
+      levelSelections: state.levelSelections,
+      inspectionReport: state.inspectionReport,
+      masterFileName: state.masterFileName,
+      sampleFileName: state.sampleFileName,
+      sessionId: state.sessionId,
+    }),
+
   clearMasterFile: () =>
     set({
       masterFile: null,
@@ -349,6 +398,7 @@ export const useUploadStore = create<UploadState>()((set, get) => ({
       error: null,
       differenceFilters: { ...DEFAULT_DIFFERENCE_FILTERS },
       barcodeConfig: createDefaultBarcodeConfig(),
+      brailleConfig: { ...DEFAULT_BRAILLE_INSPECTION_OPTIONS },
       commentSelections: {},
       levelSelections: {},
       customComments: [],

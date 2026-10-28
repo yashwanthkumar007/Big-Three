@@ -2,9 +2,11 @@ import {
   Accordion,
   AccordionSummary,
   AccordionDetails,
+  Autocomplete,
   Box,
   Button,
   Checkbox,
+  CircularProgress,
   Divider,
   FormControlLabel,
   MenuItem,
@@ -12,6 +14,7 @@ import {
   RadioGroup,
   Select,
   Stack,
+  TextField,
   Typography,
 } from "@mui/material";
 
@@ -20,11 +23,17 @@ import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import { useUploadStore } from "@/store/uploadStore";
 import type { DifferenceFilters } from "@/store/uploadStore";
 import { getInspectionLabel } from "@/shared/config/inspectionConfig";
+import {
+  BRAILLE_LANGUAGES,
+  BRAILLE_RESOLUTIONS,
+  type BrailleInspectionOptions,
+} from "@/shared/config/brailleInspectionConfig";
 
 type InspectionSidebarProps = {
   inspectionType: string;
   onClose: () => void;
-  onInspect: () => void;
+  onInspect: (options?: BrailleInspectionOptions) => void;
+  isInspecting?: boolean;
 };
 
 
@@ -32,6 +41,7 @@ export default function InspectionSidebar({
   inspectionType,
   onClose,
   onInspect,
+  isInspecting = false,
 }: InspectionSidebarProps) {
   const differenceFilters = useUploadStore(
     (state) => state.differenceFilters
@@ -39,6 +49,15 @@ export default function InspectionSidebar({
   const setDifferenceFilters = useUploadStore(
     (state) => state.setDifferenceFilters
   );
+
+  if (inspectionType === "braille") {
+    return (
+      <BrailleInspectionSidebar
+        onInspect={onInspect}
+        isInspecting={isInspecting}
+      />
+    );
+  }
 
   const handleCheckbox =
     (name: keyof DifferenceFilters) =>
@@ -542,6 +561,205 @@ export default function InspectionSidebar({
     </Box>
   );
 }
+
+function BrailleInspectionSidebar({
+  onInspect,
+  isInspecting,
+}: Pick<InspectionSidebarProps, "onInspect" | "isInspecting">) {
+  const brailleConfig = useUploadStore((state) => state.brailleConfig);
+  const setBrailleConfig = useUploadStore((state) => state.setBrailleConfig);
+  const resetBrailleConfig = useUploadStore((state) => state.resetBrailleConfig);
+
+  const handleLanguageChange = (value: string) => {
+    const selected = BRAILLE_LANGUAGES.find((option) => option === value);
+    if (selected) {
+      setBrailleConfig({ ...brailleConfig, language: selected });
+    }
+  };
+
+  const handleResolutionChange = (value: string) => {
+    const selected = BRAILLE_RESOLUTIONS.find((option) => option === value);
+    if (selected) {
+      setBrailleConfig({ ...brailleConfig, resolution: selected });
+    }
+  };
+
+  return (
+    <Box
+      sx={{
+        position: "fixed",
+        top: 0,
+        left: 0,
+        width: 330,
+        height: "100vh",
+        boxSizing: "border-box",
+        bgcolor: "#16181D",
+        color: "#fff",
+        overflowY: "auto",
+        overflowX: "hidden",
+        borderRight: "1px solid #2B2E35",
+        zIndex: 1200,
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
+      <Box sx={{ pt: 4, pl: 3, pr: 3, pb: 3 }}>
+        <Typography variant="h5" sx={{ fontWeight: 700 }}>
+          Braille Inspection
+        </Typography>
+        <Button
+          fullWidth
+          variant="contained"
+          disabled={isInspecting}
+          onClick={() => onInspect(brailleConfig)}
+          sx={{
+            mt: 3,
+            minHeight: 40,
+            bgcolor: "#2A276E",
+            "&:hover": { bgcolor: "#211F58" },
+            "&.Mui-disabled": { bgcolor: "#77758D", color: "#fff" },
+          }}
+        >
+          {isInspecting ? (
+            <CircularProgress size={20} sx={{ color: "#fff" }} />
+          ) : (
+            "Inspect"
+          )}
+        </Button>
+      </Box>
+      <Divider sx={{ borderColor: "#2B2E35" }} />
+
+      <Accordion sx={accordionStyle}>
+        <AccordionSummary expandIcon={<ExpandMoreIcon sx={{ color: "#fff" }} />}>
+          <Typography sx={{ fontWeight: 600 }}>Language</Typography>
+        </AccordionSummary>
+        <AccordionDetails>
+          <Autocomplete
+            fullWidth
+            size="small"
+            options={[...BRAILLE_LANGUAGES]}
+            value={brailleConfig.language}
+            disableClearable
+            onChange={(_, value) => handleLanguageChange(value)}
+            renderInput={(params) => (
+              <TextField
+                {...params}
+                slotProps={{
+                  ...params.slotProps,
+                  htmlInput: {
+                    ...params.slotProps.htmlInput,
+                    "aria-label": "Braille inspection language",
+                  },
+                }}
+              />
+            )}
+            sx={brailleAutocompleteStyle}
+          />
+        </AccordionDetails>
+      </Accordion>
+
+      <Accordion sx={accordionStyle}>
+        <AccordionSummary expandIcon={<ExpandMoreIcon sx={{ color: "#fff" }} />}>
+          <Typography sx={{ fontWeight: 600 }}>Resolution</Typography>
+        </AccordionSummary>
+        <AccordionDetails>
+          <Select
+            fullWidth
+            size="small"
+            value={brailleConfig.resolution}
+            onChange={(event) => handleResolutionChange(event.target.value)}
+            inputProps={{ "aria-label": "Braille inspection resolution" }}
+            sx={brailleSelectStyle}
+          >
+            {BRAILLE_RESOLUTIONS.map((option) => (
+              <MenuItem key={option} value={option}>
+                {option}
+              </MenuItem>
+            ))}
+          </Select>
+        </AccordionDetails>
+      </Accordion>
+
+      <Accordion sx={accordionStyle}>
+        <AccordionSummary expandIcon={<ExpandMoreIcon sx={{ color: "#fff" }} />}>
+          <Typography sx={{ fontWeight: 600 }}>Options</Typography>
+        </AccordionSummary>
+        <AccordionDetails>
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={brailleConfig.enableOverprint}
+                onChange={(event) =>
+                  setBrailleConfig({
+                    ...brailleConfig,
+                    enableOverprint: event.target.checked,
+                  })
+                }
+                sx={{
+                  color: "#fff",
+                  "&.Mui-checked": { color: "#fff" },
+                  "&.Mui-focusVisible": {
+                    outline: "2px solid #2A276E",
+                    outlineOffset: 2,
+                  },
+                }}
+              />
+            }
+            label="Enable Overprint"
+          />
+        </AccordionDetails>
+      </Accordion>
+
+      <Box
+        sx={{
+          py: 2,
+          pb: 3,
+          mt: "auto",
+          display: "flex",
+          justifyContent: "center",
+          bgcolor: "#16181D",
+        }}
+      >
+        <Button
+          variant="text"
+          onClick={resetBrailleConfig}
+          sx={{
+            textTransform: "none",
+            fontWeight: 600,
+            color: "#2A276E",
+            "&:hover": { bgcolor: "#F2F2FA" },
+          }}
+        >
+          Reset To Default
+        </Button>
+      </Box>
+
+    </Box>
+  );
+}
+
+const brailleSelectStyle = {
+  bgcolor: "#fff",
+  "& .MuiOutlinedInput-notchedOutline": { borderColor: "#D0D0D0" },
+  "&:hover .MuiOutlinedInput-notchedOutline": { borderColor: "#2A276E" },
+  "&.Mui-focused .MuiOutlinedInput-notchedOutline": {
+    borderColor: "#2A276E",
+    borderWidth: 2,
+  },
+  "& .MuiSelect-select": { py: 1.2 },
+};
+
+const brailleAutocompleteStyle = {
+  bgcolor: "#fff",
+  borderRadius: 1,
+  "& .MuiOutlinedInput-root": {
+    py: 0.1,
+    "& fieldset": { borderColor: "#D0D0D0" },
+    "&:hover fieldset": { borderColor: "#2A276E" },
+    "&.Mui-focused fieldset": { borderColor: "#2A276E", borderWidth: 2 },
+  },
+};
+
 const accordionStyle = {
   bgcolor: "#16181D",
   color: "#fff",

@@ -1,8 +1,6 @@
 """
 Barcode Inspection — single, self-contained backend module.
 
-Reference-artwork Pharma false-positive patch: 2026-10-09.
-
 Everything the Barcode Inspection workflow needs lives in this one file:
 configuration, PDF loading/rendering, candidate localisation, decoding,
 strict validation, de-duplication, grading, result generation, job status,
@@ -788,195 +786,117 @@ class CandidateLocator:
 
     @classmethod
     def find_pharma(cls, gray: np.ndarray) -> list[Candidate]:
-        """Locate Pharma-Code candidates from band-limited bar projections.
+        """Locate one-track and two-track Laetus Pharma-Code symbols.
 
-        Processing a full page's column projection dilutes the dark-pixel ratio
-        of a small barcode. Overlapping horizontal bands keep the projection
-        local; it also keeps bars together when overprinted ``TBC`` lettering
-        interrupts their connected components. The dedicated decoder still
-        makes the final decision.
+        Uses long vertical connected components and groups only bar-like
+        components that share a common baseline, consistent spacing, and
+        barcode-like width/height patterns. The one-track path requires a
+        multi-bar wide/narrow pattern to avoid classifying ordinary text as
+        Pharma Code.
         """
         if gray is None or gray.size == 0:
             return []
+
+        # Opening with a vertical kernel removes horizontal rules and most
+        # text strokes while retaining tall barcode bars.
         binary = cls._binarize(gray).astype(np.uint8)
-        height, width = binary.shape
-        band_height = min(512, height)
-        step = max(128, band_height // 2)
-        candidates: list[Candidate] = []
-
-        for band_y0 in range(0, max(height - band_height + 1, 1), step):
-            band = binary[band_y0:min(height, band_y0 + band_height)]
-            col_dark = band.mean(axis=0)
-            active = col_dark >= 0.18
-            runs: list[tuple[int, int]] = []
-            start_x = None
-            for idx, value in enumerate(active):
-                if value and start_x is None:
-                    start_x = idx
-                elif not value and start_x is not None:
-                    runs.append((start_x, idx))
-                    start_x = None
-            if start_x is not None:
-                runs.append((start_x, len(active)))
-
-            bars: list[tuple[int, int, int, int]] = []
-            for x0, x1 in runs:
-                bw = x1 - x0
-                if bw < 2:
-                    continue
-                roi = band[:, x0:x1]
-                ys = np.flatnonzero(roi.sum(axis=1) > 0)
-                if ys.size < 12:
-                    continue
-                y0, y1 = int(ys.min()) + band_y0, int(ys.max()) + 1 + band_y0
-                bh = y1 - y0
-                if bh < 12 or bh / float(max(bw, 1)) < 1.8:
-                    continue
-                fill = float(roi[ys.min():ys.max() + 1].mean())
-                if fill < 0.22:
-                    continue
-                bars.append((x0, y0, bw, bh))
-
-            if len(bars) < 5:
-                continue
-            bars.sort(key=lambda item: item[0])
-            groups: list[list[tuple[int, int, int, int]]] = []
-            for bar in bars:
-                x, y, bw, bh = bar
-                chosen = None
-                for group in reversed(groups[-12:]):
-                    gx1 = max(item[0] + item[2] for item in group)
-                    gy0 = float(np.median([item[1] for item in group]))
-                    gy1 = float(np.median([item[1] + item[3] for item in group]))
-                    median_w = float(np.median([item[2] for item in group]))
-                    median_h = max(gy1 - gy0, 1.0)
-                    gap = x - gx1
-                    mismatch = abs(y - gy0) + abs((y + bh) - gy1)
-                    if gap <= max(18.0, median_w * 5.0) and mismatch <= median_h * 0.65:
-                        chosen = group
-                        break
-                if chosen is None:
-                    groups.append([bar])
-                else:
-                    chosen.append(bar)
-
-            for group in groups:
-                if not (5 <= len(group) <= 16):
-                    continue
-                widths = np.asarray([item[2] for item in group], dtype=float)
-                heights = np.asarray([item[3] for item in group], dtype=float)
-                width_ratio = float(widths.max() / max(widths.min(), 1.0))
-                width_cv = float(widths.std() / max(widths.mean(), 1e-6))
-                height_cv = float(heights.std() / max(heights.mean(), 1e-6))
-                ordered = sorted(group, key=lambda item: item[0])
-                gaps = np.asarray([
-                    right[0] - (left[0] + left[2])
-                    for left, right in zip(ordered, ordered[1:])
-                ], dtype=float)
-                gap_cv = float(gaps.std() / max(gaps.mean(), 1e-6)) if len(gaps) > 1 else 0.0
-                one_track = width_ratio >= 1.6 and width_cv >= 0.16 and height_cv <= 0.25
-                two_track = width_cv <= 0.45 and height_cv >= 0.12
-                if not (one_track or two_track) or np.any(gaps <= 0) or gap_cv > 0.75:
-                    continue
-                x0 = min(item[0] for item in group)
-                y0 = min(item[1] for item in group)
-                x1 = max(item[0] + item[2] for item in group)
-                y1 = max(item[1] + item[3] for item in group)
-                pad_x = max(8, int(np.median(widths) * 4))
-                pad_y = max(8, int(np.median(heights) * 0.15))
-                x0, y0 = max(0, x0 - pad_x), max(0, y0 - pad_y)
-                x1, y1 = min(width, x1 + pad_x), min(height, y1 + pad_y)
-                score = float(len(group) * 10 - gap_cv * 5 - height_cv)
-                candidates.append(Candidate(x0, y0, x1 - x0, y1 - y0, "pharma", score))
-
-        return cls._reduce(candidates, 50)
-
-    @classmethod
-    def find_pharma_horizontal(cls, gray: np.ndarray) -> list[Candidate]:
-        """Find sideways one-track Pharma Codes from aligned horizontal bars.
-
-        The generic projection locator can merge a sideways symbol with nearby
-        dielines or artwork text. This locator instead finds individual long
-        horizontal bars, then groups 8-16 bars that share the same x-span and
-        have regular vertical pitch. Candidate boxes stay tight around the
-        symbol so the decoder does not see adjacent text or technical lines.
-        """
-        if gray is None or gray.size == 0:
-            return []
-        blurred = cv2.GaussianBlur(gray, (3, 3), 0)
-        _, binary = cv2.threshold(
-            blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+        vertical_kernel = cv2.getStructuringElement(
+            cv2.MORPH_RECT, (2, max(5, min(21, gray.shape[0] // 80 or 5)))
         )
-        kernel_width = max(12, min(30, int(round(gray.shape[1] * 0.006))))
-        horizontal = cv2.morphologyEx(
-            binary, cv2.MORPH_OPEN,
-            cv2.getStructuringElement(cv2.MORPH_RECT, (kernel_width, 1)),
-        )
+        opened = cv2.morphologyEx(binary, cv2.MORPH_OPEN, vertical_kernel)
         count, _labels, stats, _centroids = cv2.connectedComponentsWithStats(
-            horizontal, connectivity=8
+            opened, connectivity=8
         )
-        max_bar_thickness = max(24, int(round(gray.shape[0] * 0.012)))
+
         components: list[tuple[int, int, int, int]] = []
-        for x, y, w, h, _area in stats[1:count]:
-            if w < 25 or h < 2 or h > max_bar_thickness:
+        min_bar_h = max(10, int(gray.shape[0] * 0.012))
+        for i in range(1, count):
+            x = int(stats[i, cv2.CC_STAT_LEFT])
+            y = int(stats[i, cv2.CC_STAT_TOP])
+            w = int(stats[i, cv2.CC_STAT_WIDTH])
+            h = int(stats[i, cv2.CC_STAT_HEIGHT])
+            area = int(stats[i, cv2.CC_STAT_AREA])
+            if h < min_bar_h or w < 1 or w > max(35, int(h * 0.45)):
                 continue
-            if w / float(max(h, 1)) < 3.5:
+            if h / float(max(w, 1)) < 2.0:
                 continue
-            components.append((int(x), int(y), int(w), int(h)))
-        if len(components) < 8:
+            if area < max(20, int(w * h * 0.45)):
+                continue
+            components.append((x, y, w, h))
+
+        if len(components) < 5:
             return []
 
-        # Group by aligned horizontal extent. Pharma bars in this orientation
-        # share nearly identical x/width, while ordinary text lines do not.
-        components.sort(key=lambda item: (item[0], item[2], item[1]))
+        components.sort(key=lambda c: c[0])
         groups: list[list[tuple[int, int, int, int]]] = []
         for comp in components:
             x, y, w, h = comp
-            target = None
-            for group in reversed(groups[-40:]):
-                gx = float(np.median([item[0] for item in group]))
-                gw = float(np.median([item[2] for item in group]))
-                if abs(x - gx) <= max(5, int(gw * 0.06)) and abs(w - gw) <= max(8, int(gw * 0.10)):
-                    target = group
-                    break
-            if target is None:
-                groups.append([comp])
+            best_group = None
+            best_gap = None
+            for group in groups[-12:]:
+                gx0 = min(c[0] for c in group)
+                gx1 = max(c[0] + c[2] for c in group)
+                gy0 = min(c[1] for c in group)
+                gy1 = max(c[1] + c[3] for c in group)
+                median_h = float(np.median([c[3] for c in group]))
+                # Bars in a single symbol should have near-equal heights and
+                # align vertically; keep neighboring text in separate groups.
+                vertical_delta = max(abs(y - gy0), abs((y + h) - gy1))
+                gap = x - gx1
+                max_gap = max(35, int(np.median([c[2] for c in group]) * 4.5))
+                if -max(2, int(median_h * 0.04)) <= gap <= max_gap and vertical_delta <= max(5, int(median_h * 0.20)):
+                    if best_gap is None or abs(gap) < best_gap:
+                        best_group, best_gap = group, abs(gap)
+            if best_group is not None:
+                best_group.append(comp)
             else:
-                target.append(comp)
+                groups.append([comp])
 
-        results: list[Candidate] = []
+        candidates: list[Candidate] = []
         for group in groups:
-            # Components can be split/duplicated by the opening kernel. Keep
-            # the strongest component per nearby bar row before validating pitch.
-            group.sort(key=lambda item: item[1])
-            rows: list[tuple[int, int, int, int]] = []
-            for comp in group:
-                if rows and comp[1] - rows[-1][1] <= max(rows[-1][3], comp[3]) + 2:
-                    prev = rows[-1]
-                    if comp[2] * comp[3] > prev[2] * prev[3]:
-                        rows[-1] = comp
-                else:
-                    rows.append(comp)
-            if not 8 <= len(rows) <= 16:
+            if len(group) < 7 or len(group) > 32:
                 continue
-            xs = np.asarray([item[0] for item in rows], dtype=float)
-            ws = np.asarray([item[2] for item in rows], dtype=float)
-            ys = np.asarray([item[1] for item in rows], dtype=float)
-            hs = np.asarray([item[3] for item in rows], dtype=float)
-            pitches = np.diff(ys)
-            if len(pitches) < 7 or float(pitches.std() / max(pitches.mean(), 1e-6)) > 0.30:
+            ordered = sorted(group, key=lambda c: c[0])
+            widths = np.asarray([c[2] for c in ordered], dtype=float)
+            heights = np.asarray([c[3] for c in ordered], dtype=float)
+            centers = np.asarray([c[0] + c[2] / 2 for c in ordered], dtype=float)
+            gaps = np.diff(centers)
+            if len(gaps) < 6 or gaps.mean() <= 0:
                 continue
-            if float(ws.std() / max(ws.mean(), 1e-6)) > 0.08:
+            height_cv = float(heights.std() / max(heights.mean(), 1e-6))
+            width_ratio = float(widths.max() / max(widths.min(), 1.0))
+            gap_cv = float(gaps.std() / max(gaps.mean(), 1e-6))
+            x0 = min(c[0] for c in ordered)
+            y0 = min(c[1] for c in ordered)
+            x1 = max(c[0] + c[2] for c in ordered)
+            y1 = max(c[1] + c[3] for c in ordered)
+            bar_h = max(y1 - y0, 1)
+            aspect = (x1 - x0) / float(bar_h)
+
+            # One-track: common bar height and at least two clear bar widths.
+            # Two-track: similar widths but multiple bar-height states.
+            one_track = (
+                height_cv <= 0.18 and width_ratio >= 1.65
+                and gap_cv <= 0.38 and aspect >= 1.8
+            )
+            two_track = (
+                float(widths.std() / max(widths.mean(), 1e-6)) <= 0.30
+                and height_cv >= 0.12 and gap_cv <= 0.45 and aspect >= 0.5
+            )
+            if not (one_track or two_track):
                 continue
-            if float(xs.max() - xs.min()) > max(8, int(ws.mean() * 0.06)):
-                continue
-            x0 = max(0, int(min(item[0] for item in rows)) - 4)
-            y0 = max(0, int(min(item[1] for item in rows)) - 4)
-            x1 = min(gray.shape[1], int(max(item[0] + item[2] for item in rows)) + 4)
-            y1 = min(gray.shape[0], int(max(item[1] + item[3] for item in rows)) + 4)
-            score = float(len(rows) * 10 - pitches.std() / max(pitches.mean(), 1e-6))
-            results.append(Candidate(x0, y0, x1 - x0, y1 - y0, "pharma_rotated", score))
-        return cls._reduce(results, 20)
+
+            pad_x = max(5, int(np.median(widths) * 1.5))
+            pad_y = max(4, int(np.median(heights) * 0.12))
+            cx0 = max(0, x0 - pad_x)
+            cy0 = max(0, y0 - pad_y)
+            cx1 = min(gray.shape[1], x1 + pad_x)
+            cy1 = min(gray.shape[0], y1 + pad_y)
+            candidates.append(
+                Candidate(cx0, cy0, cx1 - cx0, cy1 - cy0, "pharma", float(len(group)))
+            )
+
+        return cls._reduce(candidates, 50)
 
     @staticmethod
     def _reduce(candidates: list[Candidate], limit: int) -> list[Candidate]:
@@ -988,26 +908,10 @@ class CandidateLocator:
     @classmethod
     def locate(cls, gray: np.ndarray) -> list[Candidate]:
         """All likely barcode regions on a page, de-duplicated by overlap."""
-        found = (
-            cls.find_linear(gray)
-            + cls.find_matrix(gray)
-            + cls.find_pharma(gray)
-            + cls.find_pharma_horizontal(gray)
-        )
-
-        # Sideways Pharma Codes are found directly from aligned horizontal bars.
-        # This is more precise than transposing the whole page and projecting
-        # columns, which merged the symbol with dielines and surrounding text.
-
+        found = cls.find_linear(gray) + cls.find_matrix(gray) + cls.find_pharma(gray)
         kept: list[Candidate] = []
         for candidate in sorted(found, key=lambda c: c.w * c.h, reverse=True):
-            # Do not let a broad Pharma/rotated candidate suppress a genuine
-            # linear or matrix candidate. Cross-family IoU suppression was able
-            # to hide EAN-13/Data Matrix regions whenever a large rotated
-            # candidate overlapped them. De-duplicate only within the same
-            # detector family; final decoded detections are de-duplicated later.
-            comparable = [other for other in kept if other.family == candidate.family]
-            if any(iou(candidate.box, other.box) > 0.6 for other in comparable):
+            if any(iou(candidate.box, other.box) > 0.6 for other in kept):
                 continue
             kept.append(candidate)
         return kept
@@ -1128,40 +1032,39 @@ class PharmaCodeDecoder:
         return left_to_right, right_to_left
 
     @staticmethod
-    def _one_track_width_threshold(widths: np.ndarray) -> float | None:
-        """Separate narrow/wide Pharma bars using the largest real width gap.
-
-        Percentile thresholds fail on short Pharmacode patterns: a few rasterized
-        narrow bars can be 1 px wider than the others and get misclassified as
-        wide. For example, [6, 6, 7, 18] px should form two clusters (6/7 and 18),
-        not three. Use the largest gap between sorted unique widths and require a
-        meaningful ratio between the two cluster medians.
-        """
-        values = np.asarray(widths, dtype=float)
-        unique = np.unique(values)
-        if unique.size < 2:
-            return None
-        gaps = np.diff(unique)
-        split_index = int(np.argmax(gaps))
-        narrow_values = values[values <= unique[split_index]]
-        wide_values = values[values >= unique[split_index + 1]]
-        if narrow_values.size < 2 or wide_values.size < 2:
-            return None
-        narrow_median = float(np.median(narrow_values))
-        wide_median = float(np.median(wide_values))
-        if narrow_median <= 0 or wide_median < narrow_median * 1.6:
-            return None
-        # Midpoint in the empty gap keeps raster noise (e.g. 6 vs 7 px) narrow.
-        return float((unique[split_index] + unique[split_index + 1]) / 2.0)
-
-    @staticmethod
     def _decode_one_track(widths: list[float]) -> tuple[int, int] | None:
-        if len(widths) < 2:
+        """Decode one-track Pharmacode using a data-driven narrow/wide split.
+
+        Percentile thresholds fail when most bars are narrow (as in many real
+        Pharmacodes). Find the largest gap between sorted measured widths
+        instead, then verify that it separates two distinct width classes.
+        The returned pair contains the values for both scan directions.
+        """
+        if len(widths) < 2 or len(widths) > 16:
             return None
         arr = np.asarray(widths, dtype=float)
-        threshold = PharmaCodeDecoder._one_track_width_threshold(arr)
-        if threshold is None:
+        arr = arr[np.isfinite(arr) & (arr > 0)]
+        if len(arr) != len(widths):
             return None
+
+        ordered = np.sort(arr)
+        gaps = np.diff(ordered)
+        if not len(gaps):
+            return None
+        split = int(np.argmax(gaps))
+        narrow_values = ordered[: split + 1]
+        wide_values = ordered[split + 1 :]
+        if not len(narrow_values) or not len(wide_values):
+            return None
+
+        narrow = float(np.median(narrow_values))
+        wide = float(np.median(wide_values))
+        if narrow <= 0 or wide < narrow * 1.5:
+            return None
+        # The classes must be separated beyond ordinary rasterisation noise.
+        if float(gaps[split]) < max(1.0, narrow * 0.25):
+            return None
+        threshold = (float(ordered[split]) + float(ordered[split + 1])) / 2.0
 
         def value(seq: list[float]) -> int:
             total = 0
@@ -1271,68 +1174,44 @@ class PharmaCodeDecoder:
                     }
                     return detections
 
-        # Classic one-track Pharma-Code uses two clearly separated bar-width
-        # classes, a common bar height and regular spacing. Text glyphs often
-        # produce a few narrow/wide vertical runs too, so a permissive five-bar
-        # minimum creates false Pharma findings (e.g. values 13, 21 or 53 on
-        # the reference leaflet). Require at least eight bars and validate each
-        # width cluster independently. The known reference symbol has ten bars
-        # in two stable classes; this retains it while rejecting small text runs.
-        bar_count = len(bars)
-        width_ratio = float(widths.max() / max(widths.min(), 1e-6))
-        gap_cv = float(gaps.std() / max(gaps.mean(), 1e-6)) if len(gaps) > 1 else 1.0
-        split = cls._one_track_width_threshold(widths)
-        if split is None:
-            return detections
-        narrow_widths = widths[widths < split]
-        wide_widths = widths[widths >= split]
-        cluster_cv_narrow = (
-            float(narrow_widths.std() / max(narrow_widths.mean(), 1e-6))
-            if len(narrow_widths) >= 2 else 1.0
-        )
-        cluster_cv_wide = (
-            float(wide_widths.std() / max(wide_widths.mean(), 1e-6))
-            if len(wide_widths) >= 2 else 1.0
-        )
-        if (
-            8 <= bar_count <= 16
-            and len(narrow_widths) >= 2
-            and len(wide_widths) >= 2
-            and height_cv <= 0.18
-            and width_ratio >= 2.0
-            and width_cv >= 0.20
-            and cluster_cv_narrow <= 0.25
-            and cluster_cv_wide <= 0.25
-            and gap_cv <= 0.35
-        ):
-            values = cls._decode_one_track([float(w) for w in widths])
-            if values is not None:
-                value_lr, value_rl = values
-                bbox = (
-                    int(min(b["x"] - b["w"] / 2 for b in bars)) + x0,
-                    int(global_y0) + y0,
-                    int(max(b["x"] + b["w"] / 2 for b in bars)) + x0,
-                    int(global_y1) + y0,
-                )
-                detection = Detection(
-                    format_id="PHARMA_CODE",
-                    value=str(value_lr),
-                    page=page,
-                    bbox=bbox,
-                    polygon=[],
-                    decoder="pharma-code:one-track",
-                )
-                detection.verification = {
-                    "pharmaVariant": "one-track",
-                    "leftRightValue": value_lr,
-                    "rightLeftValue": value_rl,
-                    "barCount": bar_count,
-                    "barWidths": [float(w) for w in widths],
-                    "widthRatio": width_ratio,
-                }
-                detections.append(detection)
-                return detections
-
+        # Classic one-track Pharma Code: bars share a common height and the
+        # narrow/wide widths encode the numeric value. Only accept this after
+        # the locator has supplied a barcode-shaped candidate and the extracted
+        # bars pass count, spacing, and width-class checks.
+        if not detections and len(bars) >= 7:
+            width_arr = np.asarray([b["w"] for b in bars], dtype=float)
+            height_arr = np.asarray([b["h"] for b in bars], dtype=float)
+            centers = np.asarray([b["x"] for b in bars], dtype=float)
+            center_gaps = np.diff(centers)
+            width_ratio = float(width_arr.max() / max(width_arr.min(), 1e-6))
+            height_cv = float(height_arr.std() / max(height_arr.mean(), 1e-6))
+            gap_cv = float(center_gaps.std() / max(center_gaps.mean(), 1e-6)) if len(center_gaps) else 9.0
+            if width_ratio >= 1.65 and height_cv <= 0.20 and gap_cv <= 0.38:
+                decoded = cls._decode_one_track([float(v) for v in width_arr])
+                if decoded is not None:
+                    value_lr, value_rl = decoded
+                    bbox = (
+                        int(min(b["x"] - b["w"] / 2 for b in bars)) + x0,
+                        int(global_y0) + y0,
+                        int(max(b["x"] + b["w"] / 2 for b in bars)) + x0,
+                        int(global_y1) + y0,
+                    )
+                    detection = Detection(
+                        format_id="PHARMA_CODE",
+                        value=str(value_lr),
+                        page=page,
+                        bbox=bbox,
+                        polygon=[],
+                        decoder="pharma-code:one-track",
+                    )
+                    detection.verification = {
+                        "pharmaVariant": "one-track",
+                        "leftRightValue": value_lr,
+                        "rightLeftValue": value_rl,
+                        "barCount": len(bars),
+                        "barWidths": [int(v) for v in width_arr],
+                    }
+                    detections.append(detection)
         return detections
 
 
@@ -1404,22 +1283,18 @@ class BarcodeDecoder:
             if not text:
                 continue
             format_id = _normalise_format(getattr(result, "format", None))
-            # ZXing reports the physical symbology (Code128/QRCode/DataMatrix),
-            # while GS1 is a data-format layer. Classify only when the payload
-            # carries a recognisable GS1 AIM identifier, AI notation, or GTIN AI.
-            gs1_ai = bool(re.search(r"(?:^|\x1d|\()01(?:\)|\d{14})", text))
-            if format_id == "CODE_128" and "GS1_128" in self.allowed:
-                sym_id = str(getattr(result, "symbology_identifier", "") or "")
-                if sym_id == "]C1" or text.startswith("]C1") or "(01)" in text or gs1_ai:
-                    format_id = "GS1_128"
             if format_id == "QR_CODE" and "GS1_QR" in self.allowed:
-                digital_link = bool(re.match(
-                    r"^https?://[^\s]+/(?:01/\d{14}|01%2F\d{14})(?:[/\?#]|$)", text, re.I
-                ))
-                if digital_link or text.startswith("]Q3") or "(01)" in text or text.startswith("01") and len(text) >= 16 and text[2:16].isdigit():
+                # GS1 Digital Link is carried by QR; the generic decoder exposes
+                # it as QRCode. Use the payload to distinguish the GS1 variant.
+                if (
+                    text.startswith("http://")
+                    or text.startswith("https://")
+                    or text.startswith("01")
+                    or "(01)" in text
+                ):
                     format_id = "GS1_QR"
             if format_id == "DATA_MATRIX" and "GS1_DATAMATRIX" in self.allowed:
-                if text.startswith("]d2") or "(01)" in text or (text.startswith("01") and len(text) >= 16 and text[2:16].isdigit()):
+                if text.startswith("]d2") or text.startswith("01") or "(01)" in text:
                     format_id = "GS1_DATAMATRIX"
             if format_id is None or format_id not in self.allowed:
                 continue
@@ -1637,33 +1512,10 @@ class BarcodeDecoder:
         self, gray: np.ndarray, candidate: Candidate, page: int
     ) -> list[Detection]:
         """Decode one candidate, including the dedicated Pharma-Code path."""
-        if candidate.family in ("pharma", "pharma_rotated"):
+        if candidate.family == "pharma":
             if "PHARMA_CODE" not in self.allowed:
                 return []
-            if candidate.family == "pharma":
-                return PharmaCodeDecoder.decode(gray, candidate, page)
-
-            # Decode sideways symbols in transposed coordinates, then map the
-            # box back. Directional values are swapped to match the artwork's
-            # left/bottom and right/top labels after a 90-degree rotation.
-            transposed = np.ascontiguousarray(gray.T)
-            rotated_candidate = Candidate(
-                candidate.y, candidate.x, candidate.h, candidate.w,
-                "pharma", candidate.score,
-            )
-            detections = PharmaCodeDecoder.decode(transposed, rotated_candidate, page)
-            for detection in detections:
-                x0, y0, x1, y1 = detection.bbox
-                detection.bbox = (y0, x0, y1, x1)
-                detection.polygon = [(y, x) for x, y in detection.polygon]
-                detection.verification["orientation"] = "rotated_90"
-                left_right = detection.verification.get("leftRightValue")
-                right_left = detection.verification.get("rightLeftValue")
-                if left_right is not None and right_left is not None:
-                    detection.verification["leftRightValue"] = right_left
-                    detection.verification["rightLeftValue"] = left_right
-                    detection.value = str(right_left)
-            return detections
+            return PharmaCodeDecoder.decode(gray, candidate, page)
 
         """Decode one candidate, retrying with a padded/upscaled crop.
 
@@ -1675,41 +1527,36 @@ class BarcodeDecoder:
         if crop.size == 0:
             return []
 
-        # Fast staged decode: original pixels and Otsu first. Most genuine
-        # symbols decode here without six transforms on every candidate.
+        # Try original pixels before enhancement: thresholding may destroy weak
+        # modules. Every variant is capped before decoding to bound the cost.
         source, shrink = self._limit_side(crop, MAX_DECODE_SIDE)
-        variants = self._decode_variants(source)
-        primary = [variants[0]]
-        if len(variants) > 2:
-            primary.append(variants[2])
-        for variant_name, variant in primary:
+        for variant_name, variant in self._decode_variants(source):
             detections = self._to_detections(
-                self._read(self._to_rgb(variant)), page, (x0, y0),
-                f"zxing-cpp:{variant_name}", 1.0 / shrink,
+                self._read(self._to_rgb(variant)),
+                page,
+                (x0, y0),
+                f"zxing-cpp:{variant_name}",
+                1.0 / shrink,
             )
             if detections:
                 return detections
-        for variant_name, variant in (variants[1:2] + variants[3:4]):
-            detections = self._to_detections(
-                self._read(self._to_rgb(variant)), page, (x0, y0),
-                f"zxing-cpp:{variant_name}", 1.0 / shrink,
-            )
-            if detections:
-                return detections
+
+        # Attempts 2..n: upscale THIS CROP ONLY, and only while its modules can
+        # still be too small to resolve. Upscaling a crop that is already large
+        # cannot help — its bars are many pixels wide by definition — so those
+        # retries are skipped instead of being run for nothing.
         if max(crop.shape[:2]) < UPSCALE_MAX_SIDE:
-            for scale in (1.5, 2.0):
+            for scale in RETRY_UPSCALES:
                 enlarged = cv2.resize(
                     crop, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC
                 )
-                _, enlarged_otsu = cv2.threshold(
-                    cv2.GaussianBlur(enlarged, (3, 3), 0), 0, 255,
-                    cv2.THRESH_BINARY + cv2.THRESH_OTSU,
-                )
-                for variant_name, variant in (("upscaled-original", enlarged),
-                                               ("upscaled-otsu", enlarged_otsu)):
+                for variant_name, variant in self._decode_variants(enlarged)[:2]:
                     detections = self._to_detections(
-                        self._read(self._to_rgb(variant)), page, (x0, y0),
-                        f"zxing-cpp:{variant_name}-{scale:g}x", 1.0 / scale,
+                        self._read(self._to_rgb(variant)),
+                        page,
+                        (x0, y0),
+                        f"zxing-cpp:upscaled-{variant_name}",
+                        1.0 / scale,
                     )
                     if detections:
                         return detections
@@ -2559,8 +2406,15 @@ class BarcodeVerifier:
             _side(self._image[y1:min(height, y1 + margin), x0:x1]),
         ]
         values = [v for v in sides if v is not None]
+        # Keep left/right at the top level because the UI's shared quiet-zone
+        # formatter reads those fields for both linear and 2D symbols. Preserve
+        # the additional top/bottom measurements for matrix symbols as well.
         return {
             "grade": score_to_grade(min(values)) if values else None,
+            "left": sides[0],
+            "right": sides[1],
+            "top": sides[2],
+            "bottom": sides[3],
             "other": {
                 "left": sides[0],
                 "right": sides[1],
@@ -2795,14 +2649,26 @@ class BarcodeVerifier:
                 "value": round(edge_contrast, 2),
             }
 
-        # --- modulation: reuse the existing metric, never a second algorithm
+        # --- modulation -------------------------------------------------
+        # Prefer the existing pipeline measurement. If it is absent or invalid,
+        # derive the same indicative contrast ratio from this verified ROI.
+        # This keeps verification populated even when an upstream quality
+        # measurement was not attached to a Detection object.
         existing_modulation = quality.get("modulation")
-        if existing_modulation is not None:
-            modulation_pct = min(max(float(existing_modulation), 0.0), 1.0) * 100.0
-            payload["modulation"] = {
-                "grade": score_to_grade(modulation_pct),
-                "value": round(modulation_pct, 2),
-            }
+        try:
+            modulation_ratio = float(existing_modulation)
+            if not math.isfinite(modulation_ratio):
+                raise ValueError("non-finite modulation")
+            # The existing QualityGrader stores modulation on a 0..1 scale.
+            modulation_ratio = min(max(modulation_ratio, 0.0), 1.0)
+        except (TypeError, ValueError):
+            modulation_ratio = min(max((light - dark) / 100.0, 0.0), 1.0)
+
+        modulation_pct = round(modulation_ratio * 100.0, 2)
+        payload["modulation"] = {
+            "grade": score_to_grade(modulation_pct),
+            "value": modulation_pct,
+        }
 
         payload["quietZone"] = self._quiet_zone(clipped, linear)
         payload["defects"] = self._defects(roi)
@@ -2866,7 +2732,7 @@ class BarcodeVerifier:
             decoded=bool(value),
             symbol_contrast=symbol_contrast,
             edge_contrast=edge_contrast,
-            modulation=quality.get("modulation"),
+            modulation=modulation_ratio,
             quiet_min=quiet_min,
             defect_value=payload["defects"].get("value"),
         )
@@ -2986,6 +2852,22 @@ class BarcodeVerifier:
 # De-duplication and ordering
 # ---------------------------------------------------------------------------
 
+
+
+def _overlap_over_smaller(
+    a: tuple[int, int, int, int], b: tuple[int, int, int, int]
+) -> float:
+    """Intersection divided by the smaller box area (handles nested boxes)."""
+    x0 = max(a[0], b[0])
+    y0 = max(a[1], b[1])
+    x1 = min(a[2], b[2])
+    y1 = min(a[3], b[3])
+    intersection = max(0, x1 - x0) * max(0, y1 - y0)
+    area_a = max(0, a[2] - a[0]) * max(0, a[3] - a[1])
+    area_b = max(0, b[2] - b[0]) * max(0, b[3] - b[1])
+    smaller = min(area_a, area_b)
+    return float(intersection / smaller) if smaller > 0 else 0.0
+
 def deduplicate(detections: list[Detection]) -> tuple[list[Detection], int]:
     """Collapse the same physical symbol detected by several passes.
 
@@ -3002,7 +2884,10 @@ def deduplicate(detections: list[Detection]) -> tuple[list[Detection], int]:
                 existing.page == detection.page
                 and existing.format_id == detection.format_id
                 and existing.value == detection.value
-                and iou(existing.bbox, detection.bbox) > IOU_MERGE_THRESHOLD
+                and (
+                    iou(existing.bbox, detection.bbox) > IOU_MERGE_THRESHOLD
+                    or _overlap_over_smaller(existing.bbox, detection.bbox) >= 0.80
+                )
             ):
                 duplicate = True
                 break
@@ -3061,8 +2946,6 @@ class PageStats:
     valid: int = 0
     rejected: int = 0
     unreadable_candidates: int = 0
-    matrix_candidates: int = 0
-    matrix_valid: int = 0
     error: str | None = None
 
 
@@ -3237,7 +3120,6 @@ class BarcodeInspectionEngine:
                                 detection=time.perf_counter() - detect_started
                             )
                             page_stats.candidates += len(matrix_candidates)
-                            page_stats.matrix_candidates += len(matrix_candidates)
 
                             for candidate in matrix_candidates:
                                 self.cancel_token.raise_if_cancelled()
@@ -3262,8 +3144,6 @@ class BarcodeInspectionEngine:
                                     ]
                                     detections.append(detection)
                                     page_stats.valid += 1
-                                    if BARCODE_FORMATS.get(detection.format_id, ("", ""))[1] == "matrix2D":
-                                        page_stats.matrix_valid += 1
 
                         # Scan transposed imagery for linear codes printed at
                         # 90 degrees. The TBC example is artwork rather than a
@@ -3294,6 +3174,66 @@ class BarcodeInspectionEngine:
 
                         page_area = float(rotated_image.shape[0] * rotated_image.shape[1])
                         page_stats.candidates += len(rotated_candidates)
+
+                        # Pharma-Code uses a dedicated decoder (ZXing does not
+                        # decode this symbology). Run the same pharma locator
+                        # against the transposed page so horizontal/sideways
+                        # pharma bars become the vertical bars expected by it.
+                        if "PHARMA_CODE" in self.allowed_formats:
+                            pharma_candidates = CandidateLocator.find_pharma(rotated_image)
+                            page_stats.candidates += len(pharma_candidates)
+                            for pharma_candidate in pharma_candidates:
+                                self.cancel_token.raise_if_cancelled()
+                                pharma_found = PharmaCodeDecoder.decode(
+                                    rotated_image, pharma_candidate, page_index
+                                )
+                                page_stats.decoded += len(pharma_found)
+
+                                for detection in pharma_found:
+                                    is_valid, _reason = validator.validate(
+                                        rotated_image, detection
+                                    )
+                                    if not is_valid:
+                                        page_stats.rejected += 1
+                                        continue
+
+                                    detection.validated = True
+                                    detection.quality = QualityGrader.measure(
+                                        rotated_image, detection
+                                    )
+                                    detection.grade = QualityGrader.grade(
+                                        detection.quality
+                                    )
+
+                                    # rotated_image is gray.T: swap x/y to map
+                                    # the box and polygon back to the page.
+                                    x0, y0, x1, y1 = detection.bbox
+                                    detection.bbox = (
+                                        int(round(y0 * scale)),
+                                        int(round(x0 * scale)),
+                                        int(round(y1 * scale)),
+                                        int(round(x1 * scale)),
+                                    )
+                                    detection.polygon = [
+                                        (int(round(y * scale)), int(round(x * scale)))
+                                        for x, y in detection.polygon
+                                    ]
+                                    # gray.T is a transpose (not a pure rotation),
+                                    # so the scan direction is mirrored relative to
+                                    # the original artwork. Pharmacode is direction-
+                                    # dependent; use the reverse reading for this
+                                    # transposed pass. For the supplied artwork this
+                                    # is the right-to-left Pharmacode value (8480).
+                                    if detection.format_id == "PHARMA_CODE":
+                                        reverse_value = (detection.verification or {}).get(
+                                            "rightLeftValue"
+                                        )
+                                        if reverse_value is not None:
+                                            detection.value = str(reverse_value)
+                                    detection.decoder += ":rotated-90"
+                                    detections.append(detection)
+                                    page_stats.valid += 1
+
                         for candidate in rotated_candidates:
                             self.cancel_token.raise_if_cancelled()
                             if (candidate.w * candidate.h) / page_area > 0.01:
@@ -3411,20 +3351,12 @@ class BarcodeInspectionEngine:
 
         detections, stats = self._run_pages(dpi, page_indices, emit)
 
-        # Re-render at 150 DPI only when the primary pass found no validated
-        # symbol on a page. This avoids a second raster/locator pass on pages
-        # that already have findings while retaining a recovery path for empty
-        # pages where localisation may have missed every symbol.
-        primary_pages_with_results = {
-            detection.page for detection in detections if detection.validated
-        }
-        fallback_pages = [
-            page_index for page_index in page_indices
-            if page_index not in primary_pages_with_results
-        ]
-        if fallback_pages:
+        # Low-contrast matrix symbols and labeled rotated barcode artwork may
+        # only be visible in the targeted 150-DPI fallback. Merge its findings
+        # with the configured-resolution scan before assigning result ids.
+        if page_indices:
             fallback_detections, fallback_stats = self._run_matrix_fallback(
-                fallback_pages,
+                page_indices,
                 dpi,
                 include_matrix=dpi != MATRIX_FALLBACK_DPI,
             )
@@ -3440,8 +3372,6 @@ class BarcodeInspectionEngine:
                     page_stat.unreadable_candidates += (
                         fallback_stat.unreadable_candidates
                     )
-                    page_stat.matrix_candidates += fallback_stat.matrix_candidates
-                    page_stat.matrix_valid += fallback_stat.matrix_valid
 
         emit("barcode_validation")
         self.cancel_token.raise_if_cancelled()
@@ -3506,7 +3436,6 @@ class BarcodeInspectionEngine:
                 "duplicatesRemoved": removed,
                 "rejected": sum(s.rejected for s in stats),
                 "decoderCalls": self.decoder_calls,
-                "fallbackPages": len(fallback_pages),
                 "pages": [s.__dict__ for s in stats],
                 "errors": [
                     {"page": s.page, "error": s.error} for s in stats if s.error
@@ -3580,7 +3509,6 @@ class BarcodeInspectionEngine:
             candidates = CandidateLocator.locate(gray)
             self._add_stage_seconds(detection=time.perf_counter() - detect_started)
             stats.candidates = len(candidates)
-            stats.matrix_candidates = sum(c.family == "matrix2D" for c in candidates)
             self.cancel_token.raise_if_cancelled()
 
             decoder = BarcodeDecoder(
@@ -3604,17 +3532,20 @@ class BarcodeInspectionEngine:
                     )
             stats.decoded += len(found)
 
-            # Full-page decode is costly, so use it only when the candidate
-            # pass failed to find any decoder-supported (non-Pharma) symbol.
-            # A custom Pharma decoder can succeed while the locator misses the
-            # EAN/2D symbols elsewhere on the same artwork; treating that Pharma
-            # result as proof that the whole page was covered caused regressions.
-            decoder_supported_found = any(
-                item.format_id != "PHARMA_CODE" for item in found
-            )
-            if not decoder_supported_found:
-                page_fallback = decoder.decode_page_once(gray, page_index)
-                found.extend(page_fallback)
+            # -- stage 2: one full-page safety net -------------------------
+            # This complements candidate decoding: it can recover a symbol
+            # missed by localisation even when another crop already decoded.
+            page_scan = decoder.decode_page_once(gray, page_index)
+            existing = {
+                (d.value, d.format_id)
+                for d in found
+            }
+
+            for barcode in page_scan:
+                key = (barcode.value, barcode.format_id)
+                if key not in existing:
+                    found.append(barcode)
+                    existing.add(key)
             stats.decoded = len(found)
 
             self._add_stage_seconds(decoding=time.perf_counter() - decode_started)
@@ -3637,8 +3568,6 @@ class BarcodeInspectionEngine:
                     continue
 
                 detection.validated = True
-                if BARCODE_FORMATS.get(detection.format_id, ("", ""))[1] == "matrix2D":
-                    stats.matrix_valid += 1
                 detection.quality = QualityGrader.measure(gray, detection)
                 detection.grade = QualityGrader.grade(detection.quality)
 

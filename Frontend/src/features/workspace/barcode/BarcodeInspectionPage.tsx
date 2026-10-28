@@ -51,11 +51,9 @@ const INSPECTION_TYPE = "barcode";
  *
  * Visually it is Barcode-specific (brand navy header, single drag-and-drop
  * zone, navy Upload button), but technically it reuses the existing MedInspect
- * infrastructure: on upload it only populates the shared Zustand store and
- * navigates to the existing workspace route, which in turn calls the
- * existing `createInspection` (Blob Storage + Cosmos) and `startInspection`
- * API, renders the existing progress UI and redirects to the existing result
- * page. No new endpoint, upload service, result page or workflow is created.
+ * infrastructure: on upload it populates the shared Zustand store and
+ * navigates to the existing workspace route, which starts the barcode job and
+ * shows its live progress in the existing results table.
  */
 export default function BarcodeInspectionPage() {
   const navigate = useNavigate();

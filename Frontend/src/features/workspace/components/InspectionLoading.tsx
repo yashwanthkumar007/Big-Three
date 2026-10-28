@@ -18,12 +18,14 @@ import CancelRoundedIcon from "@mui/icons-material/CancelRounded";
 import ErrorOutlineRoundedIcon from "@mui/icons-material/ErrorOutlineRounded";
 
 import OrganizationLogo from "@/assets/logos/viatris logo.png";
+import { getInspectionLabel } from "@/shared/config/inspectionConfig";
 
 type InspectionLoadingProps = {
   inspectionType: string;
   status?: string | null;
   progress?: number;
   failed?: boolean;
+  error?: string | null;
   onCancel?: () => void;
 };
 
@@ -37,14 +39,27 @@ const BACKEND_STEPS = [
   "Preparing inspection results...",
 ];
 
+const BRAILLE_BACKEND_STEPS = [
+  "Uploading Braille document...",
+  "Loading Braille document...",
+  "Analyzing Braille dots...",
+  "Translating Braille...",
+  "Preparing Braille results...",
+];
+
 export default function InspectionLoading({
   inspectionType,
   status,
   progress,
   failed = false,
+  error,
   onCancel,
 }: InspectionLoadingProps) {
   const navigate = useNavigate();
+  const isBrailleInspection = inspectionType === "braille";
+  const backendSteps = isBrailleInspection
+    ? BRAILLE_BACKEND_STEPS
+    : BACKEND_STEPS;
 
   /* Map a backend status string to a step index */
   const currentStep = useMemo(() => {
@@ -53,6 +68,20 @@ export default function InspectionLoading({
     const normalized = status.toLowerCase();
 
     if (normalized.includes("upload")) return 0;
+    if (isBrailleInspection) {
+      if (normalized.includes("load")) return 1;
+      if (normalized.includes("translat")) return 3;
+      if (normalized.includes("prepar")) return 4;
+      if (
+        normalized.includes("analyz") ||
+        normalized.includes("inspect") ||
+        normalized.includes("compar")
+      ) {
+        return 2;
+      }
+      return 0;
+    }
+
     if (normalized.includes("master")) return 1;
     if (normalized.includes("sample")) return 2;
     if (normalized.includes("compar")) return 3;
@@ -60,7 +89,7 @@ export default function InspectionLoading({
     if (normalized.includes("prepar")) return 6;
 
     return 0;
-  }, [status]);
+  }, [isBrailleInspection, status]);
 
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
@@ -127,7 +156,7 @@ export default function InspectionLoading({
               variant="body1"
               sx={{ color: "text.secondary", textAlign: "center" }}
             >
-              Text inspection failed. Please try again.
+              {error || `${getInspectionLabel(inspectionType)} failed. Please try again.`}
             </Typography>
           </Stack>
 
@@ -199,15 +228,16 @@ export default function InspectionLoading({
             variant="h4"
             sx={{ fontWeight: 700, color: "#2A276E" }}
           >
-            Inspecting Artwork
+            {isBrailleInspection ? "Inspecting Braille" : "Inspecting Artwork"}
           </Typography>
 
           <Typography
             variant="body1"
             sx={{ color: "text.secondary", textAlign: "center" }}
           >
-            Please wait while the inspection engine analyzes your
-            documents.
+            {isBrailleInspection
+              ? "Please wait while the Braille inspection engine analyzes your document."
+              : "Please wait while the inspection engine analyzes your documents."}
           </Typography>
         </Stack>
 
@@ -321,7 +351,7 @@ export default function InspectionLoading({
             overflow: "hidden",
           }}
         >
-          {BACKEND_STEPS.map((step, index) => {
+          {backendSteps.map((step, index) => {
             const completed = index < currentStep;
             const active = index === currentStep;
 
@@ -335,7 +365,7 @@ export default function InspectionLoading({
                   px: 3,
                   py: 1.6,
                   borderBottom:
-                    index !== BACKEND_STEPS.length - 1
+                    index !== backendSteps.length - 1
                       ? "1px solid #ECECEC"
                       : "none",
 

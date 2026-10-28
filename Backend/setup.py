@@ -13,5 +13,8 @@ setup(
         "azure-cosmos",
         "azure-storage-blob",
         "azure-identity",
+        "python-docx",
+        "fonttools",
+        "zxing-cpp",
     ],
 )

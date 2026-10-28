@@ -1,9 +1,16 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 
 import {
   Box,
   Button,
   Checkbox,
+  CircularProgress,
   IconButton,
   MenuItem,
   Select,
@@ -26,15 +33,13 @@ import ShareOutlinedIcon from "@mui/icons-material/ShareOutlined";
 import FormatListBulletedIcon from "@mui/icons-material/FormatListBulleted";
 import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
 import VisibilityOffOutlinedIcon from "@mui/icons-material/VisibilityOffOutlined";
-import SkipPreviousIcon from "@mui/icons-material/SkipPrevious";
-import SkipNextIcon from "@mui/icons-material/SkipNext";
 import ArrowUpwardIcon from "@mui/icons-material/ArrowUpward";
 import ArrowDownwardIcon from "@mui/icons-material/ArrowDownward";
 import UnfoldLessIcon from "@mui/icons-material/UnfoldLess";
 import UnfoldMoreIcon from "@mui/icons-material/UnfoldMore";
 
 import PdfToolbar, { type PageFilter, type ViewerTool } from "./PdfToolbar";
-import PdfViewer, { BarcodeHoverCard } from "./PdfViewer";
+import PdfViewer from "./PdfViewer";
 import type { InspectionDifference } from "./InspectionResults";
 import { truncateFileName } from "@/shared/utils/truncateFileName";
 import type {
@@ -79,23 +84,22 @@ const DARK_BLUE_TOOLTIP_SLOT_PROPS = {
  *
  * The table uses `table-layout: fixed`, so the header row defines the
  * widths and every body row follows them exactly — the header and body
- * can never drift apart. `width: 100%` with this minimum keeps the table
- * filling the space it is given (no blank strip on the right), scrolling
- * internally only when the available space is narrower than the
- * recommended widths.
+ * can never drift apart. The compact minimum width keeps all columns
+ * readable on a standard desktop display while allowing narrow screens to
+ * scroll the table internally.
  */
 const TABLE_COLUMN_WIDTHS = {
-  checkbox: 40,
-  id: 60,
-  type: 220,
-  decodedValue: 420,
-  grade: 100,
-  level: 180,
-  comment: 220,
+  checkbox: 36,
+  id: 130,
+  type: 165,
+  decodedValue: 250,
+  grade: 85,
+  level: 140,
+  comment: 180,
 } as const;
 
-/** Sum of the recommended column widths (40+60+220+420+100+180+220). */
-const TABLE_MIN_WIDTH = 1240;
+/** Sum of the compact column widths. */
+const TABLE_MIN_WIDTH = 986;
 
 /** One barcode finding, shaped by the existing inspection result model. */
 export type BarcodeFinding = {
@@ -223,10 +227,8 @@ export default function BarcodeInspectionResults({
    * or Go to ID).
    */
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [checkedIds, setCheckedIds] = useState<number[]>(() =>
-    barcodes.map((barcode) => barcode.id),
-  );
-  /* Eye toggle for the barcode overlays — lives in the heading, next to Go to ID. */
+  const [checkedIds, setCheckedIds] = useState<number[]>([]);
+  /* Eye toggle for the barcode overlays — lives in the summary header. */
   const [overlaysVisible, setOverlaysVisible] = useState(true);
   const [commentsOpen, setCommentsOpen] = useState(true);
   const [commentSearch, setCommentSearch] = useState("");
@@ -253,28 +255,6 @@ export default function BarcodeInspectionResults({
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
 
-  /*
-   * The result page opens BEFORE the engine has finished, so the first render
-   * always sees an empty list. Once the findings arrive, check every row so
-   * that all of them are included in the report - but select NOTHING: by
-   * default no row is highlighted and the viewer stays on page 1 at the
-   * default zoom until the user clicks a finding. Runs once per result set
-   * so that unchecking rows afterwards is never overridden.
-   */
-  const adoptedResultsRef = useRef(false);
-
-  useEffect(() => {
-    if (barcodes.length === 0) {
-      adoptedResultsRef.current = false;
-      return;
-    }
-
-    if (adoptedResultsRef.current) return;
-    adoptedResultsRef.current = true;
-
-    setCheckedIds(barcodes.map((barcode) => barcode.id));
-  }, [barcodes]);
-
   const toggleSort = useCallback((key: SortKey) => {
     if (sortKey === key) {
       setSortDirection((direction) => (direction === "asc" ? "desc" : "asc"));
@@ -294,7 +274,7 @@ export default function BarcodeInspectionResults({
   const configuredComments = useMemo(() => {
     const options = configuredCommentOptions(setupConfig ?? null);
     const defaultComment = setupConfig?.comments.default1?.trim();
-    const all = defaultComment ? [defaultComment, ...options] : options;
+    const all = ["Reviewed", ...(defaultComment ? [defaultComment] : []), ...options];
     return [...new Set(all)];
   }, [setupConfig]);
 
@@ -329,6 +309,11 @@ export default function BarcodeInspectionResults({
 
   const handleLevelChange = (id: number, value: string) => {
     setLevelSelections({ ...levelSelections, [id]: value });
+    if (value) {
+      handleCommentChange(id, "Reviewed");
+    } else {
+      handleCommentChange(id, "None");
+    }
     void logAuditEvent({
       event: "DIFFERENCE_LEVEL_CHANGED",
       action: "Update Barcode Level",
@@ -620,7 +605,12 @@ export default function BarcodeInspectionResults({
       )
     ) : null;
 
-  const sortableHeader = (label: string, key: SortKey, width: number) => (
+  const sortableHeader = (
+    label: string,
+    key: SortKey,
+    width: number,
+    leadingContent?: ReactNode,
+  ) => (
     <TableCell
       onClick={() => toggleSort(key)}
       sx={{
@@ -639,13 +629,14 @@ export default function BarcodeInspectionResults({
         cursor: "pointer",
         userSelect: "none",
         whiteSpace: "nowrap",
-        py: 0.75,
+        py: 0.5,
       }}
     >
       <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-        {label}
-        {renderSortIcon(key)}
-      </Box>
+          {leadingContent}
+          {label}
+          {renderSortIcon(key)}
+        </Box>
     </TableCell>
   );
 
@@ -702,26 +693,8 @@ export default function BarcodeInspectionResults({
           </Typography>
         </Box>
 
-        {/* Go to ID + overlay visibility eye — in the heading (top-left),
-            beside the count badge rather than in the right-hand column. */}
+        {/* Overlay visibility eye remains in the summary header. */}
         <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-          <Typography
-            variant="caption"
-            sx={{ color: "#535A62", whiteSpace: "nowrap" }}
-          >
-            Go to ID
-          </Typography>
-          <TextField
-            size="small"
-            value={goToId}
-            onChange={(event) => setGoToId(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") handleGoToId();
-            }}
-            placeholder="ID"
-            sx={{ width: 64 }}
-            slotProps={{ htmlInput: { "aria-label": "Go to barcode ID" } }}
-          />
           <Tooltip
             title={
               overlaysVisible ? "Hide barcode overlays" : "Show barcode overlays"
@@ -867,15 +840,8 @@ export default function BarcodeInspectionResults({
       {/* ==========================================================
           BARCODE RESULTS TABLE
          ========================================================== */}
-      <Box
-        sx={{
-          borderBottom: "1px solid #D5D9DD",
-          flexShrink: 0,
-          display: "flex",
-          alignItems: "stretch",
-        }}
-      >
-        <TableContainer sx={{ flex: 1, maxHeight: 232 }}>
+      <Box sx={{ borderBottom: "1px solid #D5D9DD", flexShrink: 0 }}>
+        <TableContainer sx={{ maxHeight: 190 }}>
           <Table
             size="small"
             stickyHeader
@@ -908,7 +874,45 @@ export default function BarcodeInspectionResults({
                   />
                 </TableCell>
 
-                {sortableHeader("ID", "id", TABLE_COLUMN_WIDTHS.id)}
+                {sortableHeader(
+                  "ID",
+                  "id",
+                  TABLE_COLUMN_WIDTHS.id,
+                  <Box
+                    sx={{ display: "flex", alignItems: "center", gap: 0.5 }}
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <Typography
+                      variant="caption"
+                      sx={{ color: "#FFFFFF", fontSize: 10, lineHeight: 1 }}
+                    >
+                      Go to ID
+                    </Typography>
+                    <TextField
+                      size="small"
+                      value={goToId}
+                      onChange={(event) => setGoToId(event.target.value)}
+                      onKeyDown={(event) => {
+                        event.stopPropagation();
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          handleGoToId();
+                        }
+                      }}
+                      placeholder="ID"
+                      sx={{
+                        width: 52,
+                        bgcolor: "#FFFFFF",
+                        borderRadius: 0.5,
+                        "& .MuiInputBase-root": { height: 26 },
+                        "& input": { py: 0.25, px: 0.75, fontSize: 12 },
+                      }}
+                      slotProps={{
+                        htmlInput: { "aria-label": "Go to barcode ID" },
+                      }}
+                    />
+                  </Box>,
+                )}
                 {sortableHeader("Type", "type", TABLE_COLUMN_WIDTHS.type)}
                 {sortableHeader(
                   "Decoded Value",
@@ -934,12 +938,32 @@ export default function BarcodeInspectionResults({
                     sx={{ py: 3 }}
                     data-testid="barcode-results-empty"
                   >
-                    <Typography
-                      variant="body2"
-                      color={isFailed ? "error" : "text.secondary"}
-                    >
-                      {emptyMessage}
-                    </Typography>
+                    {isProcessing ? (
+                      <Stack
+                        direction="row"
+                        spacing={1}
+                        sx={{
+                          alignItems: "center",
+                          justifyContent: "center",
+                        }}
+                      >
+                        <CircularProgress
+                          size={18}
+                          aria-label="Barcode inspection in progress"
+                          sx={{ color: BRAND_NAVY }}
+                        />
+                        <Typography variant="body2" color="text.secondary">
+                          {emptyMessage}
+                        </Typography>
+                      </Stack>
+                    ) : (
+                      <Typography
+                        variant="body2"
+                        color={isFailed ? "error" : "text.secondary"}
+                      >
+                        {emptyMessage}
+                      </Typography>
+                    )}
                   </TableCell>
                 </TableRow>
               )}
@@ -965,61 +989,6 @@ export default function BarcodeInspectionResults({
           </Table>
         </TableContainer>
 
-        {/* Page navigation, right of the table. (The eye toggle was removed
-            and the Go to ID control now lives in the heading above.) */}
-        <Box
-          sx={{
-            display: "flex",
-            flexDirection: "column",
-            justifyContent: "center",
-            gap: 0.5,
-            px: 1,
-            borderLeft: "1px solid #E5E7EB",
-          }}
-        >
-          <Stack
-            direction="row"
-            spacing={0.25}
-            sx={{ justifyContent: "center" }}
-          >
-            <Tooltip
-              title="Previous page"
-              arrow
-              slotProps={DARK_BLUE_TOOLTIP_SLOT_PROPS}
-            >
-              <span>
-                <IconButton
-                  size="small"
-                  disabled={pageNumber <= 1}
-                  onClick={() => setPageNumber((page) => Math.max(1, page - 1))}
-                  sx={iconButtonSx}
-                >
-                  <SkipPreviousIcon fontSize="small" />
-                </IconButton>
-              </span>
-            </Tooltip>
-            <Typography
-              variant="caption"
-              sx={{ color: "#535A62", alignSelf: "center", px: 0.5 }}
-            >
-              {pageNumber} / {Math.max(1, numPages)}
-            </Typography>
-            <Tooltip title="Next page" arrow slotProps={DARK_BLUE_TOOLTIP_SLOT_PROPS}>
-              <span>
-                <IconButton
-                  size="small"
-                  disabled={pageNumber >= numPages}
-                  onClick={() =>
-                    setPageNumber((page) => Math.min(numPages, page + 1))
-                  }
-                  sx={iconButtonSx}
-                >
-                  <SkipNextIcon fontSize="small" />
-                </IconButton>
-              </span>
-            </Tooltip>
-          </Stack>
-        </Box>
       </Box>
 
       {/* ==========================================================
@@ -1033,6 +1002,7 @@ export default function BarcodeInspectionResults({
           <PdfToolbar
             pageNumber={pageNumber}
             numPages={Math.max(1, numPages)}
+            pageNavigationAtTop
             zoom={zoom}
             onPageChange={setPageNumber}
             onZoomChange={setZoom}
@@ -1207,42 +1177,11 @@ function BarcodeRow({
   onCommentChange,
   onCommentPersist,
 }: BarcodeRowProps) {
-  /*
-   * Hovering a row shows the same barcode verification card as the PDF
-   * overlay. The row is mapped onto the shared difference shape purely to
-   * feed that card - it does not change how a click selects the row.
-   */
-  const hoverDifference: InspectionDifference = useMemo(
-    () => ({
-      id: barcode.id,
-      type: "Barcode",
-      master: barcode.decodedValue,
-      sample: "",
-      level: null,
-      comment: null,
-      page: barcode.page,
-      masterBox: barcode.box,
-      sampleBox: null,
-      barcodeType: barcode.type,
-      decodedValue: barcode.decodedValue,
-      grade: barcode.grade,
-      barcodeVerification: barcode.verification ?? null,
-    }),
-    [barcode],
-  );
-
   return (
-    /*
-     * Clicking any cell from ID through Grade toggles selection of the row
-     * and drives the viewer. The checkbox, Level and Comment cells stop
-     * propagation below, so they keep their own behaviour.
-     */
     <TableRow
       hover
       selected={isSelected}
-      onClick={() => onSelect(barcode)}
       sx={{
-        cursor: "pointer",
         "&.Mui-selected": {
           bgcolor: "rgba(42,39,110,0.12)",
           "&:hover": { bgcolor: "rgba(42,39,110,0.18)" },
@@ -1258,61 +1197,35 @@ function BarcodeRow({
         />
       </TableCell>
 
-      <TableCell sx={cellSx}>{barcode.id}</TableCell>
-
-      <TableCell sx={cellSx}>
-        <Tooltip
-          title={<BarcodeHoverCard difference={hoverDifference} />}
-          arrow
-          placement="top"
-          enterDelay={400}
-          slotProps={{
-            tooltip: {
-              sx: {
-                bgcolor: "#2A276E",
-                color: "#FFFFFF",
-                border: "1px solid #2A276E",
-                boxShadow: "0 4px 12px rgba(0,0,0,0.25)",
-                maxWidth: 320,
-                whiteSpace: "normal",
-              },
-            },
-            arrow: { sx: { color: "#2A276E" } },
-          }}
-        >
-          <Typography variant="body2" noWrap sx={cellTextSx}>
-            {barcode.type || "—"}
-          </Typography>
-        </Tooltip>
+      <TableCell
+        sx={{ ...cellSx, cursor: "pointer" }}
+        onClick={() => onSelect(barcode)}
+      >
+        {barcode.id}
       </TableCell>
 
-      <TableCell sx={cellSx}>
-        <Tooltip
-          title={<BarcodeHoverCard difference={hoverDifference} />}
-          arrow
-          placement="top"
-          enterDelay={400}
-          slotProps={{
-            tooltip: {
-              sx: {
-                bgcolor: "#2A276E",
-                color: "#FFFFFF",
-                border: "1px solid #2A276E",
-                boxShadow: "0 4px 12px rgba(0,0,0,0.25)",
-                maxWidth: 320,
-                whiteSpace: "normal",
-              },
-            },
-            arrow: { sx: { color: "#2A276E" } },
-          }}
-        >
-          <Typography variant="body2" noWrap sx={cellTextSx}>
-            {barcode.decodedValue || "—"}
-          </Typography>
-        </Tooltip>
+      <TableCell
+        sx={{ ...cellSx, cursor: "pointer" }}
+        onClick={() => onSelect(barcode)}
+      >
+        <Typography variant="body2" noWrap sx={cellTextSx}>
+          {barcode.type || "—"}
+        </Typography>
       </TableCell>
 
-      <TableCell sx={cellSx}>
+      <TableCell
+        sx={{ ...cellSx, cursor: "pointer" }}
+        onClick={() => onSelect(barcode)}
+      >
+        <Typography variant="body2" noWrap sx={cellTextSx}>
+          {barcode.decodedValue || "—"}
+        </Typography>
+      </TableCell>
+
+      <TableCell
+        sx={{ ...cellSx, cursor: "pointer" }}
+        onClick={() => onSelect(barcode)}
+      >
         {barcode.grade ? (
           barcode.grade
         ) : (
@@ -1406,6 +1319,9 @@ function BarcodeCommentCard({
     <Box
       onClick={() => onSelect(barcode)}
       sx={{
+        width: "100%",
+        minWidth: 0,
+        boxSizing: "border-box",
         p: 1,
         mb: 0.75,
         borderRadius: 1,
@@ -1454,9 +1370,10 @@ function BarcodeCommentCard({
             pt: 0.75,
             borderTop: "1px solid #E5E7EB",
             display: "grid",
-            gridTemplateColumns: "minmax(0, 1fr) auto",
+            gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
             columnGap: 1,
             rowGap: 0.25,
+            minWidth: 0,
           }}
         >
           {verificationRows.map((row) => (
@@ -1466,13 +1383,17 @@ function BarcodeCommentCard({
                 display: "contents",
               }}
             >
-              <Typography variant="caption" sx={verificationLabelSx}>
+              <Typography
+                variant="caption"
+                sx={{ ...verificationLabelSx, minWidth: 0, overflowWrap: "anywhere" }}
+              >
                 {row.label}:
               </Typography>
               <Typography
                 variant="caption"
                 sx={{
                   ...verificationValueSx,
+                  minWidth: 0,
                   // "N/A" is a deliberate absence, not a measurement, so it is
                   // dimmed to keep real numbers visually dominant.
                   color: row.value === NOT_AVAILABLE ? "#9AA0A6" : "#1F2328",
@@ -1528,7 +1449,7 @@ const checkboxOnDarkSx = {
  * below the GlobalVision-style sizes. Long Type / Decoded Value content still
  * truncates with an ellipsis (noWrap) and shows the full text on hover.
  */
-const cellSx = { py: 0.5, fontSize: 13 };
+const cellSx = { py: 0.35, fontSize: 12.5 };
 
 const cellTextSx = { fontSize: 13 };
 
@@ -1569,5 +1490,6 @@ const verificationValueSx = {
   fontWeight: 600,
   lineHeight: 1.5,
   textAlign: "right" as const,
-  whiteSpace: "nowrap" as const,
+  whiteSpace: "normal" as const,
+  overflowWrap: "anywhere" as const,
 };

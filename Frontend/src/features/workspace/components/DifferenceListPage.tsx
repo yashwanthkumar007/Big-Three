@@ -20,6 +20,7 @@ import {
 
 import {
   useUploadStore,
+  requestDifferenceListState,
   subscribeToStateUpdates,
   type DifferenceListSyncMessage,
 } from "@/store/uploadStore";
@@ -75,7 +76,7 @@ export default function DifferenceListPage() {
   const configuredComments = useMemo(() => {
     const options = configuredCommentOptions(setupConfig ?? null);
     const defaultComment = setupConfig?.comments.default1?.trim();
-    const all = defaultComment ? [defaultComment, ...options] : options;
+    const all = ["Reviewed", ...(defaultComment ? [defaultComment] : []), ...options];
     return [...new Set(all)];
   }, [setupConfig]);
 
@@ -116,12 +117,11 @@ export default function DifferenceListPage() {
         // Apply the broadcast state to this window's store —
         // this makes live changes from the main Results page appear
         // instantly in the Difference List window without a reload.
-        const state = useUploadStore.getState();
-        state.setCommentSelections(message.commentSelections);
-        state.setLevelSelections(message.levelSelections);
+        useUploadStore.getState().setDifferenceListState(message);
       }
     );
 
+    requestDifferenceListState();
     return unsubscribe;
   }, []);
 
@@ -145,6 +145,11 @@ export default function DifferenceListPage() {
       ...levelSelections,
       [differenceId]: value,
     });
+    if (value) {
+      handleCommentChange(differenceId, "Reviewed");
+    } else {
+      handleCommentChange(differenceId, "None");
+    }
 
     // Audit: record level assignment on a difference (best-effort).
     void logAuditEvent({

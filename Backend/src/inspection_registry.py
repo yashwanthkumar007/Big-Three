@@ -30,6 +30,7 @@ if _BACKEND_ROOT not in sys.path:
 from src.pipelines.comparison_pipeline import run_text_inspection  # noqa: E402
 # The Barcode Inspection engine is a single self-contained module.
 from barcode_inspection import run_barcode_inspection  # noqa: E402
+from braille_inspect import run_braille_inspection  # noqa: E402
 
 
 class InspectionConfig:
@@ -67,6 +68,10 @@ _INSPECTION_REGISTRY: dict[str, InspectionConfig] = {
     "barcode": InspectionConfig(
         pipeline=run_barcode_inspection,
         label="Barcode Inspection",
+    ),
+    "braille": InspectionConfig(
+        pipeline=run_braille_inspection,
+        label="Braille Inspection",
     ),
 }
 

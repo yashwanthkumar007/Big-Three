@@ -89,8 +89,8 @@ export default function Header() {
     {
       name: "Braille Inspection",
       icon: <BrailleDotsIcon />,
-      route: "/workspace/braille",
-      available: false
+      route: "/workspace/braille/upload",
+      available: true
     },
     {
       name: "Barcode Inspection",

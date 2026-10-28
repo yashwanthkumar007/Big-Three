@@ -22,6 +22,8 @@ import BarcodeInspectionSidebar from "./components/BarcodeInspectionSidebar";
 
 import InspectionLoading from "./components/InspectionLoading";
 
+import BarcodeInspectionLoading from "./components/BarcodeInspectionLoading";
+
 import BarcodeInspectionResults, {
   type BarcodeResultPageModel,
 } from "./components/BarcodeInspectionResults";
@@ -43,6 +45,7 @@ import {
 import { useBarcodeJobStatus } from "@/shared/hooks/useBarcodeJobStatus";
 
 import { BARCODE_STAGE_LABELS } from "@/shared/config/barcodeInspectionConfig";
+import type { BrailleInspectionOptions } from "@/shared/config/brailleInspectionConfig";
 
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -100,8 +103,8 @@ export default function WorkspacePage() {
 
   /*
    * Barcode Inspection is a SINGLE-FILE workflow: the id of the barcode job is
-   * tracked so the processing screen can poll the real backend stage/status
-   * and cancel the run. No Master/Sample job ids are involved.
+   * tracked so the result table can poll the real backend stage/status and
+   * cancel the run. No Master/Sample job ids are involved.
    */
   const [barcodeInspectionId, setBarcodeInspectionId] = useState<string | null>(
     null,
@@ -154,7 +157,9 @@ export default function WorkspacePage() {
   /* Run inspection                                                     */
   /* ------------------------------------------------------------------ */
 
-  const runInspection = useCallback(async () => {
+  const runInspection = useCallback(async (
+    brailleSettings?: BrailleInspectionOptions
+  ) => {
     /*
      * Re-entry guard: the Start action may only be in flight once. A double
      * click must never create a second inspection or a second barcode job.
@@ -174,6 +179,7 @@ export default function WorkspacePage() {
     }
 
     const resolvedSampleFile = inspectionType === "barcode" ? masterFile : (sampleFile ?? masterFile);
+    const inspectionSampleFile = inspectionType === "braille" ? null : resolvedSampleFile;
 
     isStartingRef.current = true;
 
@@ -197,7 +203,7 @@ export default function WorkspacePage() {
       try {
         const inspection = await createInspection(
           masterFile,
-          resolvedSampleFile,
+          inspectionSampleFile,
           inspectionType ?? "text"
         );
         inspectionId = inspection.inspectionId;
@@ -240,13 +246,17 @@ export default function WorkspacePage() {
         report,
       } = await startInspection(
         masterFile,
-        resolvedSampleFile,
+        inspectionSampleFile,
         {
           /* Dynamic session ID prefix follows the inspection type
            * (text -> TXT-, graphics -> GRP-, etc.). */
           inspectionType: inspectionType as InspectionType,
           differenceFilters,
           barcodeConfig: isBarcodeInspection ? barcodeConfig : undefined,
+          brailleConfig:
+            inspectionType === "braille" && brailleSettings
+              ? { language: brailleSettings.language }
+              : undefined,
           inspectionId,
           onStatus: ({
             status: currentStatus,
@@ -328,18 +338,14 @@ export default function WorkspacePage() {
     setMasterFile,
     setSampleFile,
   ]);
+
   /* ------------------------------------------------------------------ */
   /* IMPORTANT                                                          */
   /* ------------------------------------------------------------------ */
   /*
-   * There is intentionally NO useEffect here that calls runInspection().
-   *
-   * The previous automatic inspection logic has been removed.
-   *
-   * Uploading the files only opens this workspace.
-   *
-   * Inspection starts only when the user clicks
-   * the inspection action in the sidebar.
+   * Uploading files only opens the workspace, where the user can preview the
+   * document and configure inspection options. Every inspection type starts
+   * only when the user clicks its Inspect action.
    */
 
   /* ------------------------------------------------------------------ */
@@ -353,11 +359,12 @@ export default function WorkspacePage() {
   const effectiveSampleFile = sampleFile ?? masterFile;
 
   /*
-   * Barcode Inspection works on a single source file (master === sample),
-   * so it renders one full-width viewer instead of the side-by-side
-   * comparison used by Text Inspection.
+   * Barcode and Braille each inspect a single source file, so they render
+   * one full-width viewer instead of the side-by-side comparison.
    */
   const isBarcode = inspectionType === "barcode";
+  const isBraille = inspectionType === "braille";
+  const isSingleFile = isBarcode || isBraille;
 
   /* ------------------------------------------------------------------ */
   /* Build inspection result                                           */
@@ -416,6 +423,7 @@ export default function WorkspacePage() {
             level: null,
 
             comment: finding.comment,
+            status: finding.status,
 
             page: finding.page,
 
@@ -428,6 +436,18 @@ export default function WorkspacePage() {
             barcodeType: finding.barcode_type ?? null,
             decodedValue: finding.decoded_value ?? null,
             grade: finding.grade ?? null,
+            brailleMetrics: finding.braille_metrics
+              ? {
+                  lines: finding.braille_metrics.lines,
+                  characters: finding.braille_metrics.characters,
+                  dots: finding.braille_metrics.dots,
+                  dotHMillimeters: finding.braille_metrics.dot_h_mm,
+                  dotVMillimeters: finding.braille_metrics.dot_v_mm,
+                  characterMillimeters: finding.braille_metrics.character_mm,
+                  wordMillimeters: finding.braille_metrics.word_mm,
+                  lineMillimeters: finding.braille_metrics.line_mm,
+                }
+              : null,
           })
         );
 
@@ -465,6 +485,8 @@ export default function WorkspacePage() {
         differences,
 
         pages,
+        brailleLanguage: inspectionReport.metadata?.language,
+        inspectionStatus: "Completed",
       };
     };
 
@@ -567,16 +589,34 @@ export default function WorkspacePage() {
     inspectionStatus === "uploading" ||
     inspectionStatus === "inspecting"
   ) {
-    /*
-     * Barcode Inspection opens its RESULT page immediately.
-     *
-     * The full-screen waiting screen is only used for the short window while
-     * the file is stored and the background job is being created. As soon as
-     * the job id exists the user is on the real result page, which polls the
-     * running job and fills itself in when the engine finishes. The browser is
-     * never parked on a spinner for the length of the inspection.
-     */
     if (isBarcodeInspection) {
+      const barcodeJobFinished =
+        barcodeJob.status === "completed" ||
+        barcodeJob.status === "failed" ||
+        barcodeJob.status === "cancelled";
+
+      if (!barcodeJobFinished) {
+        return (
+          <BarcodeInspectionLoading
+            stage={
+              inspectionStatus === "uploading"
+                ? null
+                : barcodeJob.stage
+            }
+            progress={
+              barcodeJob.totalPages > 0
+                ? {
+                    currentPage: barcodeJob.currentPage,
+                    totalPages: barcodeJob.totalPages,
+                  }
+                : null
+            }
+            onCancel={handleCancelBarcode}
+            isCancelling={barcodeJob.isCancelling}
+          />
+        );
+      }
+
       return (
         <BarcodeInspectionResults
           result={barcodeResultModel}
@@ -584,11 +624,7 @@ export default function WorkspacePage() {
           isFullscreen={isFullscreen}
           onToggleFullscreen={() => setIsFullscreen((fullscreen) => !fullscreen)}
           jobStatus={barcodeJob.status ?? "queued"}
-          stageLabel={
-            inspectionStatus === "uploading"
-              ? "Uploading file..."
-              : BARCODE_STAGE_LABELS[barcodeJob.stage]
-          }
+          stageLabel={BARCODE_STAGE_LABELS[barcodeJob.stage]}
           progress={
             barcodeJob.totalPages > 0
               ? {
@@ -643,6 +679,7 @@ export default function WorkspacePage() {
           inspectionType ?? "text"
         }
         failed
+        error={inspectionError}
         onCancel={() => {
           setInspectionStatus("idle");
 
@@ -730,9 +767,9 @@ export default function WorkspacePage() {
         sx={{
           width: "100%",
 
-          px: isBarcode ? 1.5 : 3,
+          px: isSingleFile ? 1.5 : 3,
 
-          py: isBarcode ? 0.75 : 2,
+          py: isSingleFile ? 0.75 : 2,
 
           bgcolor: "#ffffff",
 
@@ -746,7 +783,7 @@ export default function WorkspacePage() {
 
             alignItems: "center",
 
-            gap: isBarcode ? 1 : 2,
+            gap: isSingleFile ? 1 : 2,
 
             minWidth: 0,
           }}
@@ -768,9 +805,9 @@ export default function WorkspacePage() {
             sx={{
               textTransform: "none",
 
-              minWidth: isBarcode ? 56 : undefined,
+              minWidth: isSingleFile ? 56 : undefined,
 
-              height: isBarcode ? 32 : undefined,
+              height: isSingleFile ? 32 : undefined,
 
               color: sidebarOpen
                 ? "#fff"
@@ -796,13 +833,12 @@ export default function WorkspacePage() {
           </Button>
 
           {/*
-            Barcode Inspection: NO second start action here. The red
-            "Start >>" button was removed — the only control that starts
-            Barcode Inspection is the blue "Inspect" button inside the
-            Barcode Inspection configuration panel.
+            Barcode Inspection starts automatically after upload. The Start
+            button remains the entry point to its configuration panel for
+            subsequent runs.
           */}
 
-          {isBarcode && (
+          {isSingleFile && (
             <Typography
               variant="body2"
               noWrap
@@ -827,7 +863,7 @@ export default function WorkspacePage() {
           {/* File Information                                             */}
           {/* ------------------------------------------------------------ */}
 
-          {!isBarcode && <Box
+          {!isSingleFile && <Box
             sx={{
               display: "grid",
 
@@ -989,6 +1025,7 @@ export default function WorkspacePage() {
                 inspectionType={inspectionType ?? "text"}
                 onClose={() => setSidebarOpen(false)}
                 onInspect={runInspection}
+                isInspecting={Boolean(status)}
               />
             )}
           </>
@@ -1015,7 +1052,7 @@ export default function WorkspacePage() {
             panes would duplicate the viewer, so Barcode gets one
             full-width pane instead of the side-by-side comparison.
           */}
-          {isBarcode ? (
+          {isSingleFile ? (
             <Box sx={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
               <ViewerPane
                 title=""

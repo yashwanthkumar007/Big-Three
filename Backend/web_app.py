@@ -567,7 +567,7 @@ def _authenticated_identity(*, require_admin: bool = False):
         )
     except Exception as exc:
         return None, (jsonify({"error": str(exc)}), 500)
-    if not users:
+    if not users or not isinstance(users[0], dict):
         return None, (jsonify({"error": "User not found."}), 404)
     if require_admin:
         account_type = str(users[0].get("accountType", "User")).strip().lower()
@@ -1620,9 +1620,8 @@ def _inspection_to_client(record: dict, include_result: bool = False) -> dict:
         "resultId": record.get("resultId"),
         # Real processing stage reported by the engine (barcode only today).
         "stage": record.get("stage"),
-        # Barcode Inspection is a SINGLE-FILE workflow: `inspectionFile` is the
-        # one uploaded document, so the client never has to fake a Master/Sample
-        # pair for it.
+        # Barcode and Braille are single-file workflows: `inspectionFile` is
+        # the uploaded document, so clients do not need to fake a file pair.
         "inspectionFile": record.get("masterFile"),
         # Full result (with the stored report) is only meaningful on the
         # single-inspection payload; the list keeps it for simplicity since
@@ -1717,19 +1716,21 @@ def api_inspections():
         return jsonify({"error": "master file is required"}), 400
     if inspection_type == "barcode" and not sample:
         sample = master
-    if not sample:
+    if inspection_type != "braille" and not sample:
         return jsonify({"error": "master and sample files are required"}), 400
 
     inspection_id = _new_inspection_id()
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     master_file_id = f"FILE-{uuid.uuid4().hex[:8]}"
-    sample_file_id = f"FILE-{uuid.uuid4().hex[:8]}"
+    sample_file_id = f"FILE-{uuid.uuid4().hex[:8]}" if sample else None
 
     master_blob = (
         f"{inspection_id}-master-{master_file_id}-{_safe_blob_name(master.filename)}"
     )
     sample_blob = (
         f"{inspection_id}-sample-{sample_file_id}-{_safe_blob_name(sample.filename)}"
+        if sample
+        else None
     )
     # NOTE: blob names are kept flat (no "/" segments) because the configured
     # Azure APIM storage gateway routes a single path segment per blob. The
@@ -1738,17 +1739,18 @@ def api_inspections():
     # prefix on every blob name.
 
     master_content = master.read()
-    sample_content = sample.read()
+    sample_content = sample.read() if sample else None
 
     try:
         upload_blob(
             MASTER_FILES_CONTAINER, master_blob, master_content,
             content_type=master.mimetype or "application/octet-stream",
         )
-        upload_blob(
-            SAMPLE_FILES_CONTAINER, sample_blob, sample_content,
-            content_type=sample.mimetype or "application/octet-stream",
-        )
+        if sample and sample_content is not None and sample_blob:
+            upload_blob(
+                SAMPLE_FILES_CONTAINER, sample_blob, sample_content,
+                content_type=sample.mimetype or "application/octet-stream",
+            )
     except Exception as exc:
         logger.error("[INSPECTIONS] Blob upload failed for %s: %s", inspection_id, exc)
         return jsonify({"error": "Failed to store uploaded files."}), 500
@@ -1761,7 +1763,11 @@ def api_inspections():
         "inspectionType": inspection_type,
         "status": "uploaded",
         "masterFile": _file_meta(master_file_id, master, master_blob, len(master_content)),
-        "sampleFile": _file_meta(sample_file_id, sample, sample_blob, len(sample_content)),
+        "sampleFile": (
+            _file_meta(sample_file_id, sample, sample_blob, len(sample_content))
+            if sample and sample_blob and sample_content is not None
+            else None
+        ),
         "createdAt": now,
         "uploadedAt": now,
         "submittedAt": None,
@@ -1773,14 +1779,15 @@ def api_inspections():
     # Keep local copies FIRST so the existing inspection engine (which reads
     # from UPLOAD_ROOT) keeps working unchanged — this must happen before the
     # Cosmos write so a Cosmos outage cannot force the frontend to re-upload
-    # both PDFs through the legacy /api/upload fallback.
+    # the files through the legacy /api/upload fallback.
     try:
         session_dir = os.path.join(UPLOAD_ROOT, inspection_id)
         os.makedirs(session_dir, exist_ok=True)
         with open(os.path.join(session_dir, "master.pdf"), "wb") as fh:
             fh.write(master_content)
-        with open(os.path.join(session_dir, "sample.pdf"), "wb") as fh:
-            fh.write(sample_content)
+        if sample_content is not None:
+            with open(os.path.join(session_dir, "sample.pdf"), "wb") as fh:
+                fh.write(sample_content)
     except Exception as exc:
         logger.warning("[INSPECTIONS] Local cache write failed for %s: %s", inspection_id, exc)
 
@@ -1817,22 +1824,23 @@ def api_inspections():
         master_file_name=master.filename,
     )
 
-    # Audit: FILE_UPLOADED for sample file
-    log_from_authenticated_user(
-        event=FILE_UPLOADED,
-        action="File Upload",
-        application=APPLICATION_MEDINSPECT,
-        module=MODULE_TEXT_INSPECTION,
-        authenticated_user=user,
-        status=STATUS_SUCCESS,
-        description=f"Sample File uploaded. File={sample.filename}",
-        entity_type="File",
-        entity_id=sample_file_id,
-        inspection_id=inspection_id,
-        file_id=sample_file_id,
-        file_name=sample.filename,
-        sample_file_name=sample.filename,
-    )
+    if sample:
+        # Audit: FILE_UPLOADED for sample file
+        log_from_authenticated_user(
+            event=FILE_UPLOADED,
+            action="File Upload",
+            application=APPLICATION_MEDINSPECT,
+            module=MODULE_TEXT_INSPECTION,
+            authenticated_user=user,
+            status=STATUS_SUCCESS,
+            description=f"Sample File uploaded. File={sample.filename}",
+            entity_type="File",
+            entity_id=sample_file_id,
+            inspection_id=inspection_id,
+            file_id=sample_file_id,
+            file_name=sample.filename,
+            sample_file_name=sample.filename,
+        )
 
     # Audit: INSPECTION_CREATED
     log_from_authenticated_user(
@@ -1847,7 +1855,7 @@ def api_inspections():
         entity_id=inspection_id,
         inspection_id=inspection_id,
         master_file_name=master.filename,
-        sample_file_name=sample.filename,
+        sample_file_name=sample.filename if sample else None,
     )
 
     return jsonify(_inspection_to_client(record)), 201
@@ -2161,6 +2169,8 @@ def api_inspect():
         caller, auth_error = _authenticated_identity()
         if auth_error:
             return auth_error
+        if not isinstance(caller, dict):
+            return jsonify({"error": "Authenticated user could not be resolved."}), 401
         try:
             inspection_record = _get_inspection_record(inspection_id)
         except Exception as exc:
@@ -2180,8 +2190,8 @@ def api_inspect():
         )
 
         # Audit: INSPECTION_STARTED
-        master_file_name = inspection_record.get("masterFile", {}).get("fileName", "")
-        sample_file_name = inspection_record.get("sampleFile", {}).get("fileName", "")
+        master_file_name = (inspection_record.get("masterFile") or {}).get("fileName", "")
+        sample_file_name = (inspection_record.get("sampleFile") or {}).get("fileName", "")
         log_from_authenticated_user(
             event=INSPECTION_STARTED,
             action="Start Inspection",
@@ -2226,21 +2236,33 @@ def api_inspect():
     master_path = os.path.join(session_dir, "master.pdf")
     sample_path = os.path.join(session_dir, "sample.pdf")
 
-    if not os.path.exists(master_path) or not os.path.exists(sample_path):
+    if not os.path.exists(master_path) or (
+        inspection_type != "braille" and not os.path.exists(sample_path)
+    ):
         if inspection_id:
             _update_inspection_status(
                 inspection_id,
                 status="failed",
-                failedReason="Master and sample files are missing.",
+                failedReason=(
+                    "Master file is missing."
+                    if inspection_type == "braille"
+                    else "Master and sample files are missing."
+                ),
                 completedAt=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             )
-        return jsonify({"error": "Both Master and Sample must be uploaded first"}), 400
+        error_message = (
+            "Master file must be uploaded first"
+            if inspection_type == "braille"
+            else "Both Master and Sample must be uploaded first"
+        )
+        return jsonify({"error": error_message}), 400
 
-    # Barcode Inspection sends its full configuration object (profile,
-    # resolution, enableOverprint, pages) from the configuration panel. It is
-    # only forwarded to pipelines that accept it, so the other inspection types
-    # are unaffected.
+    report_sample_path = master_path if inspection_type == "braille" else sample_path
+
+    # Inspection-specific settings are only forwarded to the corresponding
+    # pipeline; unrelated inspection types never receive these configurations.
     barcode_config = data.get("barcode_config")
+    braille_config = data.get("braille_config")
 
     def _barcode_progress(stage: str) -> bool:
         """Persist the real barcode stage and honour cancellation.
@@ -2265,6 +2287,13 @@ def api_inspect():
                 filters=filters,
                 barcode_config=barcode_config,
                 progress=_barcode_progress,
+            )
+        elif inspection_type == "braille":
+            result = config.pipeline(
+                master_path,
+                None,
+                filters=filters,
+                braille_config=braille_config,
             )
         else:
             result = config.pipeline(master_path, sample_path, filters=filters)
@@ -2330,7 +2359,7 @@ def api_inspect():
             logger.warning("[INSPECT] Stage update failed for %s: %s", inspection_id, exc)
 
     try:
-        report = build_report(master_path, sample_path, result, output_dir)
+        report = build_report(master_path, report_sample_path, result, output_dir)
     except Exception as e:
         if inspection_id:
             logger.error("[INSPECT] Report rendering failed for %s: %s", inspection_id, e)
@@ -2341,6 +2370,21 @@ def api_inspect():
                 completedAt=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             )
         return jsonify({"error": f"Report rendering failed: {str(e)}"}), 500
+
+    if inspection_type == "braille":
+        source_findings = result.get("findings", [])
+        report_findings = report.get("findings", [])
+        for report_finding, source_finding in zip(report_findings, source_findings):
+            braille_metrics = source_finding.get("braille_metrics")
+            if isinstance(braille_metrics, dict):
+                report_finding["braille_metrics"] = braille_metrics
+
+        metadata = result.get("metadata")
+        if isinstance(metadata, dict):
+            report["metadata"] = {
+                **(report.get("metadata") or {}),
+                **metadata,
+            }
 
     for page in report["pages"]:
         if "master_image" in page:

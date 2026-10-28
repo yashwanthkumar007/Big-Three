@@ -114,7 +114,7 @@ def build_report(master_path: str, sample_path: str, result: dict, output_dir: s
 
     findings_out = []
     for i, f in enumerate(result["findings"], 1):
-        findings_out.append({
+        finding = {
             "id": i,
             "type": f["type"],
             "master": f["master"],
@@ -127,7 +127,13 @@ def build_report(master_path: str, sample_path: str, result: dict, output_dir: s
             "barcode_type": f.get("barcode_type"),
             "decoded_value": f.get("decoded_value"),
             "grade": f.get("grade"),
-        })
+        }
+        braille_metrics = f.get("braille_metrics")
+        if isinstance(braille_metrics, dict):
+            finding["braille_metrics"] = braille_metrics
+        if f.get("status") is not None:
+            finding["status"] = f["status"]
+        findings_out.append(finding)
 
     # NOTE: grouped/suppressed Location shifts (dominant global page
     # realignment — see grouping.py) are intentionally NOT added to
@@ -141,4 +147,12 @@ def build_report(master_path: str, sample_path: str, result: dict, output_dir: s
         for g in result.get("location_groups", [])
     ]
 
-    return {"dpi": dpi, "pages": pages, "findings": findings_out, "suppressed_shifts": suppressed_shifts}
+    report = {
+        "dpi": dpi,
+        "pages": pages,
+        "findings": findings_out,
+        "suppressed_shifts": suppressed_shifts,
+    }
+    if isinstance(result.get("metadata"), dict):
+        report["metadata"] = result["metadata"]
+    return report

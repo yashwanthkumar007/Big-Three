@@ -53,6 +53,27 @@ export function BarcodeHoverCard({ difference }: BarcodeHoverCardProps) {
   // Any non-barcode difference (text / graphics / braille / notes) keeps the
   // original Difference #N summary, so nothing else in the app changes.
   if (difference?.type !== "Barcode") {
+    if (difference?.type === "Braille") {
+      return (
+        <Box>
+          <Typography variant="caption" sx={{ fontWeight: 700, color: "#FFFFFF", display: "block" }}>
+            Braille region {difference.id}
+          </Typography>
+          <Typography variant="caption" sx={{ display: "block", color: "#D0D0E8", fontWeight: 600 }}>
+            Decoded value:{" "}
+            <Box component="span" sx={{ fontWeight: 400, color: "#E8E8F5" }}>
+              {difference.decodedValue || difference.master || "—"}
+            </Box>
+          </Typography>
+          {difference.comment && (
+            <Typography variant="caption" sx={{ display: "block", color: "#E8E8F5" }}>
+              {difference.comment}
+            </Typography>
+          )}
+        </Box>
+      );
+    }
+
     return (
       <Box>
         <Typography variant="caption" sx={{ fontWeight: 700, color: "#FFFFFF", display: "block" }}>
@@ -210,6 +231,13 @@ type PdfViewerProps = {
   zoom?: number;
   compact?: boolean;
   onOverlayClick?: (difference: InspectionDifference) => void;
+  connectorTargetRect?: {
+    findingId: number;
+    left: number;
+    top: number;
+    right: number;
+    bottom: number;
+  } | null;
   onNumPagesChange?: (numPages: number) => void;
   /**
    * Crop Compare mode — when true (master side only), the user can drag
@@ -245,21 +273,24 @@ const getBoundingBox = (
 
 export default function PdfViewer({
   file,
+  inspectionType,
   side,
   selectedDifference,
   naturalWidth,
   naturalHeight,
-  zeroBasedPageIndex = false,
+  zeroBasedPageIndex = true,
   pageNumber: requestedPageNumberFromToolbar,
   pageFollowsParent = false,
   zoom = 100,
   compact = false,
   onOverlayClick,
+  connectorTargetRect,
   onNumPagesChange,
   cropMode,
   onCropComplete,
   showDebugOverlay = false,
 }: PdfViewerProps) {
+  const viewportRef = useRef<HTMLDivElement | null>(null);
   const containerRef =
     useRef<HTMLDivElement | null>(null);
 
@@ -268,6 +299,15 @@ export default function PdfViewer({
 
   const highlightRef =
     useRef<HTMLDivElement | null>(null);
+  const previousSelectionIdRef = useRef<number | null>(null);
+  const previousViewportRef = useRef<{ left: number; top: number } | null>(null);
+  const [connectorLine, setConnectorLine] = useState<{
+    findingId: number;
+    x1: number;
+    y1: number;
+    x2: number;
+    y2: number;
+  } | null>(null);
 
   const [numPages, setNumPages] =
     useState<number>(0);
@@ -619,15 +659,24 @@ export default function PdfViewer({
     const timeout = window.setTimeout(() => {
       const highlight =
         highlightRef.current;
+      const container = containerRef.current;
 
-      if (!highlight) {
+      if (!highlight || !container) {
         return;
       }
 
-      highlight.scrollIntoView({
+      const highlightRect = highlight.getBoundingClientRect();
+      const containerRect = container.getBoundingClientRect();
+      container.scrollTo({
+        left:
+          container.scrollLeft +
+          (highlightRect.left + highlightRect.width / 2) -
+          (containerRect.left + containerRect.width / 2),
+        top:
+          container.scrollTop +
+          (highlightRect.top + highlightRect.height / 2) -
+          (containerRect.top + containerRect.height / 2),
         behavior: "smooth",
-        block: "center",
-        inline: "center",
       });
     }, 200);
 
@@ -651,21 +700,43 @@ export default function PdfViewer({
    * scroll-to-highlight effect above centers it instead.
    */
   useEffect(() => {
-    if (!containerRef.current) {
+    const container = containerRef.current;
+    if (!container) {
       return;
     }
 
-    /*
-     * `selectedDifference` is read here (not just `bbox`) so that clearing
-     * a selection whose bbox was already null still re-runs this effect.
-     */
+    const selectedId = selectedDifference?.id ?? null;
+    const previousSelectedId = previousSelectionIdRef.current;
+    previousSelectionIdRef.current = selectedId;
+
+    if (inspectionType === "braille") {
+      if (previousSelectedId === null && selectedId !== null) {
+        previousViewportRef.current = {
+          left: container.scrollLeft,
+          top: container.scrollTop,
+        };
+        return;
+      }
+
+      if (previousSelectedId !== null && selectedId === null) {
+        const previousViewport = previousViewportRef.current;
+        previousViewportRef.current = null;
+        container.scrollTo({
+          left: previousViewport?.left ?? 0,
+          top: previousViewport?.top ?? 0,
+          behavior: "smooth",
+        });
+        return;
+      }
+    }
+
     const hasHighlight = Boolean(selectedDifference) && Boolean(bbox);
 
     if (hasHighlight) {
       return;
     }
 
-    containerRef.current.scrollTo({
+    container.scrollTo({
       top: 0,
       behavior: "smooth",
     });
@@ -673,12 +744,118 @@ export default function PdfViewer({
     selectedDifference,
     bbox,
     pageNumber,
+    inspectionType,
+  ]);
+
+  useEffect(() => {
+    if (
+      inspectionType !== "braille" ||
+      !selectedDifference ||
+      !bbox ||
+      !connectorTargetRect ||
+      connectorTargetRect.findingId !== selectedDifference.id
+    ) {
+      return;
+    }
+
+    const viewport = viewportRef.current;
+    const highlight = highlightRef.current;
+    const container = containerRef.current;
+    if (!viewport || !highlight || !container) {
+      return;
+    }
+
+    let frame = 0;
+    const updateConnector = () => {
+      const viewportRect = viewport.getBoundingClientRect();
+      const regionRect = highlight.getBoundingClientRect();
+      const visibleRegion = {
+        left: Math.max(regionRect.left, viewportRect.left),
+        top: Math.max(regionRect.top, viewportRect.top),
+        right: Math.min(regionRect.right, viewportRect.right),
+        bottom: Math.min(regionRect.bottom, viewportRect.bottom),
+      };
+
+      if (
+        visibleRegion.right <= visibleRegion.left ||
+        visibleRegion.bottom <= visibleRegion.top ||
+        viewportRect.width <= 0 ||
+        viewportRect.height <= 0
+      ) {
+        setConnectorLine(null);
+        return;
+      }
+
+      const targetCenterY =
+        (connectorTargetRect.top + connectorTargetRect.bottom) / 2;
+      const next = {
+        findingId: selectedDifference.id,
+        x1: visibleRegion.right - viewportRect.left,
+        y1: (visibleRegion.top + visibleRegion.bottom) / 2 - viewportRect.top,
+        x2: viewportRect.width - 2,
+        y2: Math.max(
+          2,
+          Math.min(viewportRect.height - 2, targetCenterY - viewportRect.top)
+        ),
+      };
+      setConnectorLine((previous) =>
+        previous &&
+        previous.findingId === next.findingId &&
+        Math.abs(previous.x1 - next.x1) < 0.5 &&
+        Math.abs(previous.y1 - next.y1) < 0.5 &&
+        Math.abs(previous.x2 - next.x2) < 0.5 &&
+        Math.abs(previous.y2 - next.y2) < 0.5
+          ? previous
+          : next
+      );
+    };
+
+    const scheduleUpdate = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(updateConnector);
+    };
+    const resizeObserver = new ResizeObserver(scheduleUpdate);
+    resizeObserver.observe(viewport);
+    resizeObserver.observe(container);
+    if (pageWrapperRef.current) resizeObserver.observe(pageWrapperRef.current);
+    resizeObserver.observe(highlight);
+    container.addEventListener("scroll", scheduleUpdate, { passive: true });
+    window.addEventListener("resize", scheduleUpdate);
+    window.addEventListener("scroll", scheduleUpdate, true);
+    scheduleUpdate();
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      resizeObserver.disconnect();
+      container.removeEventListener("scroll", scheduleUpdate);
+      window.removeEventListener("resize", scheduleUpdate);
+      window.removeEventListener("scroll", scheduleUpdate, true);
+    };
+  }, [
+    bbox,
+    connectorTargetRect,
+    inspectionType,
+    pageNumber,
+    selectedDifference,
+    zoom,
+    renderedPageWidth,
+    renderedPageHeight,
   ]);
 
   return (
     <Box
-      ref={containerRef}
+      ref={viewportRef}
+      data-testid={inspectionType === "braille" ? "braille-pdf-viewport" : undefined}
       sx={{
+        height: "100%",
+        width: "100%",
+        position: "relative",
+        overflow: "hidden",
+      }}
+    >
+      <Box
+        ref={containerRef}
+        sx={{
         height: "100%",
         width: "100%",
         overflow: "auto",
@@ -953,13 +1130,17 @@ export default function PdfViewer({
                    * Thick outline to clearly mark the difference.
                    */
                   border:
-                    "3px solid #c63737",
+                    inspectionType === "braille"
+                      ? "2px solid #2A276E"
+                      : "3px solid #c63737",
 
                   /*
                    * Very light background.
                    */
                   backgroundColor:
-                    "rgba(246, 246, 247, 0.06)",
+                    inspectionType === "braille"
+                      ? "rgba(42, 39, 110, 0.08)"
+                      : "rgba(246, 246, 247, 0.06)",
 
                   /*
                    * Small outer glow so it remains
@@ -1106,6 +1287,52 @@ export default function PdfViewer({
             No coordinates available for this {side} difference.
           </Typography>
         </Box>
+      )}
+      </Box>
+      {inspectionType === "braille" &&
+        selectedDifference &&
+        bbox &&
+        connectorTargetRect &&
+        connectorLine &&
+        connectorLine.findingId === selectedDifference.id && (
+        <svg
+          data-testid="braille-region-connector"
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            inset: 0,
+            width: "100%",
+            height: "100%",
+            overflow: "hidden",
+            pointerEvents: "none",
+            zIndex: 24,
+          }}
+        >
+          <defs>
+            <marker
+              id="braille-region-arrowhead"
+              markerWidth="8"
+              markerHeight="8"
+              refX="7"
+              refY="4"
+              orient="auto"
+              markerUnits="strokeWidth"
+            >
+              <path d="M 0 0 L 8 4 L 0 8 z" fill="#2A276E" />
+            </marker>
+          </defs>
+          <path
+            d={`M ${connectorLine.x1} ${connectorLine.y1} C ${
+              connectorLine.x1 + (connectorLine.x2 - connectorLine.x1) * 0.45
+            } ${connectorLine.y1}, ${
+              connectorLine.x2 - (connectorLine.x2 - connectorLine.x1) * 0.35
+            } ${connectorLine.y2}, ${connectorLine.x2} ${connectorLine.y2}`}
+            fill="none"
+            stroke="#2A276E"
+            strokeWidth="1.5"
+            markerEnd="url(#braille-region-arrowhead)"
+          />
+        </svg>
       )}
     </Box>
   );

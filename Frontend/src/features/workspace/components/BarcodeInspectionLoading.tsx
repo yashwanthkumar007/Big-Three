@@ -18,6 +18,8 @@ type BarcodeInspectionLoadingProps = {
    * never invents progress — it renders exactly what the engine last reported.
    */
   stage?: string | null;
+  /** Current page and document page count, as reported by the engine. */
+  progress?: { currentPage: number; totalPages: number } | null;
   /** True while the cancel request is in flight. */
   isCancelling?: boolean;
   /** Cancels the running job and returns to the document viewer. */
@@ -33,6 +35,7 @@ type BarcodeInspectionLoadingProps = {
  */
 export default function BarcodeInspectionLoading({
   stage,
+  progress = null,
   isCancelling = false,
   onCancel,
 }: BarcodeInspectionLoadingProps) {
@@ -100,8 +103,17 @@ export default function BarcodeInspectionLoading({
           variant="body1"
           sx={{ color: "#535A62", fontWeight: 600 }}
         >
-          {BARCODE_STAGE_LABELS[currentStage]}
+          {stage ? BARCODE_STAGE_LABELS[currentStage] : "Uploading file..."}
         </Typography>
+        {progress && progress.totalPages > 0 && (
+          <Typography
+            data-testid="barcode-inspection-progress"
+            variant="body2"
+            sx={{ color: "#535A62" }}
+          >
+            Page {progress.currentPage} of {progress.totalPages}
+          </Typography>
+        )}
       </Stack>
     </Box>
   );

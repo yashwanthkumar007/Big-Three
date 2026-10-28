@@ -10,6 +10,7 @@ import {
   Alert,
   Box,
   Button,
+  ButtonBase,
   Checkbox,
   CircularProgress,
   Collapse,
@@ -70,6 +71,8 @@ import {
 import { truncateFileName } from "@/shared/utils/truncateFileName";
 import { getSession } from "@/shared/utils/auth";
 import {
+  broadcastStateUpdate,
+  subscribeToStateRequests,
   useUploadStore,
   type InspectionType,
 } from "@/store/uploadStore";
@@ -120,6 +123,17 @@ export type InspectionDifference = {
   barcodeType?: string | null;
   decodedValue?: string | null;
   grade?: string | null;
+  brailleMetrics?: {
+    lines?: number;
+    characters?: number;
+    dots?: number;
+    dotHMillimeters?: number | null;
+    dotVMillimeters?: number | null;
+    characterMillimeters?: number | null;
+    wordMillimeters?: number | null;
+    lineMillimeters?: number | null;
+  } | null;
+  status?: string | null;
   /**
    * Heuristic verification block for a barcode finding.
    *
@@ -135,6 +149,27 @@ export type InspectionDifference = {
    * the viewer is mapping from.
    */
   coordinateSystem?: string | null;
+};
+
+const hasNavigableBrailleRegion = (
+  difference: InspectionDifference | null
+): boolean => {
+  if (
+    !difference ||
+    typeof difference.page !== "number" ||
+    !Number.isInteger(difference.page) ||
+    difference.page < 0
+  ) {
+    return false;
+  }
+
+  const box = difference.masterBox;
+  return Boolean(
+    box &&
+      [box.x, box.y, box.width, box.height].every(Number.isFinite) &&
+      box.width > 0 &&
+      box.height > 0
+  );
 };
 
 export type CharacterDifference = {
@@ -358,6 +393,28 @@ export type InspectionResult = {
   totalDifferences: number;
   differences: InspectionDifference[];
   pages?: PageDimensions[];
+  brailleLanguage?: string;
+  inspectionStatus?: string;
+};
+
+const getBrailleFindingStatus = (
+  metrics: InspectionDifference["brailleMetrics"]
+) => {
+  const dotHeight = metrics?.dotHMillimeters;
+  const dotVertical = metrics?.dotVMillimeters;
+  const hasDotMeasurements =
+    typeof dotHeight === "number" &&
+    Number.isFinite(dotHeight) &&
+    typeof dotVertical === "number" &&
+    Number.isFinite(dotVertical);
+
+  if (
+    (typeof dotHeight === "number" && dotHeight < 2.5) ||
+    (typeof dotVertical === "number" && dotVertical < 2.5)
+  ) {
+    return "Failed";
+  }
+  return hasDotMeasurements ? "Pass" : "Unavailable";
 };
 
 type InspectionResultsProps = {
@@ -389,25 +446,105 @@ export default function InspectionResults({
   const [lastDifferenceId, setLastDifferenceId] = useState<number | null>(null);
   const [barcodeDetailsOpen, setBarcodeDetailsOpen] = useState(false);
   const [barcodeFindingsOpen, setBarcodeFindingsOpen] = useState(false);
+  const [brailleFindingsOpen, setBrailleFindingsOpen] = useState(true);
+  const brailleOpenZoomMenuRef = useRef<(() => void) | null>(null);
+  const [brailleGoToId, setBrailleGoToId] = useState("");
+  const [brailleGoToError, setBrailleGoToError] = useState("");
   const isBarcode = result.inspectionType === "barcode";
+  const isBraille = result.inspectionType === "braille";
+  const isSingleDocument = isBarcode || isBraille;
+  const brailleFindingRefs = useRef(new Map<number, HTMLButtonElement>());
+  const [brailleConnectorTargetRect, setBrailleConnectorTargetRect] = useState<{
+    findingId: number;
+    left: number;
+    top: number;
+    right: number;
+    bottom: number;
+  } | null>(null);
 
   const characterStripRef = useRef<HTMLDivElement | null>(null);
   const selectedCharacterRef = useRef<HTMLDivElement | null>(null);
 
-  const effectiveSelectedId =
-    selectedDifference?.id ?? internalSelectedId ??
-    (result.inspectionType === "barcode" ? result.differences[0]?.id ?? null : null);
+  const effectiveSelectedId = isBraille
+    ? selectedDifference?.id ?? null
+    : selectedDifference?.id ??
+      internalSelectedId ??
+      (isBarcode ? result.differences[0]?.id ?? null : null);
 
   const selectedDifferenceData =
     result.differences.find((difference) => difference.id === effectiveSelectedId) ??
     null;
+  const viewerDifference =
+    isBraille && !hasNavigableBrailleRegion(selectedDifferenceData)
+      ? null
+      : selectedDifferenceData;
+  const updateBrailleConnectorTarget = useCallback(() => {
+    const activeEntry =
+      effectiveSelectedId === null
+        ? null
+        : brailleFindingRefs.current.get(effectiveSelectedId) ?? null;
+    const rect = activeEntry?.getBoundingClientRect();
+    if (!isBraille || effectiveSelectedId === null || !rect) {
+      setBrailleConnectorTargetRect(null);
+      return;
+    }
 
+    setBrailleConnectorTargetRect((previous) =>
+      previous &&
+      previous.findingId === effectiveSelectedId &&
+      Math.abs(previous.left - rect.left) < 0.5 &&
+      Math.abs(previous.top - rect.top) < 0.5 &&
+      Math.abs(previous.right - rect.right) < 0.5 &&
+      Math.abs(previous.bottom - rect.bottom) < 0.5
+        ? previous
+        : {
+            findingId: effectiveSelectedId,
+            left: rect.left,
+            top: rect.top,
+            right: rect.right,
+            bottom: rect.bottom,
+          }
+    );
+  }, [effectiveSelectedId, isBraille]);
+
+  useEffect(() => {
+    if (!isBraille) {
+      return;
+    }
+
+    const entry =
+      effectiveSelectedId === null
+        ? null
+        : brailleFindingRefs.current.get(effectiveSelectedId) ?? null;
+    if (!entry) {
+      setBrailleConnectorTargetRect(null);
+      return;
+    }
+
+    entry.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+    let frame = 0;
+    const scheduleUpdate = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(updateBrailleConnectorTarget);
+    };
+    const observer = new ResizeObserver(scheduleUpdate);
+    observer.observe(entry);
+    window.addEventListener("resize", scheduleUpdate);
+    window.addEventListener("scroll", scheduleUpdate, true);
+    scheduleUpdate();
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer.disconnect();
+      window.removeEventListener("resize", scheduleUpdate);
+      window.removeEventListener("scroll", scheduleUpdate, true);
+    };
+  }, [effectiveSelectedId, isBraille, updateBrailleConnectorTarget]);
   const handleSelect = useCallback(
     (difference: InspectionDifference) => {
       // Toggle: clicking the already-selected difference deselects it so the
       // PDF returns to its normal (zoomed-out) view.
       if (effectiveSelectedId === difference.id) {
-        setBarcodeDetailsOpen(false);
+        if (isBarcode) setBarcodeDetailsOpen(false);
         if (onDifferenceSelect) {
           onDifferenceSelect(null);
         } else {
@@ -426,6 +563,22 @@ export default function InspectionResults({
     },
     [onDifferenceSelect, effectiveSelectedId, isBarcode]
   );
+  const handleBrailleGoToId = useCallback(() => {
+    const id = Number(brailleGoToId.trim());
+    if (!Number.isInteger(id) || id < 1) {
+      setBrailleGoToError("Enter a valid finding ID.");
+      return;
+    }
+
+    const difference = result.differences.find((finding) => finding.id === id);
+    if (!difference) {
+      setBrailleGoToError(`Finding ${id} was not found.`);
+      return;
+    }
+
+    setBrailleGoToError("");
+    handleSelect(difference);
+  }, [brailleGoToId, handleSelect, result.differences]);
 
   const differenceCount = result.totalDifferences;
 
@@ -441,7 +594,7 @@ export default function InspectionResults({
   const configuredComments = useMemo(() => {
     const options = configuredCommentOptions(setupConfig ?? null);
     const defaultComment = setupConfig?.comments.default1?.trim();
-    const all = defaultComment ? [defaultComment, ...options] : options;
+    const all = ["Reviewed", ...(defaultComment ? [defaultComment] : []), ...options];
     return [...new Set(all)];
   }, [setupConfig]);
 
@@ -460,6 +613,10 @@ export default function InspectionResults({
   const commentSelections = useUploadStore(
     (state) => state.commentSelections
   );
+  const [commentSaveFeedback, setCommentSaveFeedback] = useState<{
+    severity: "success" | "warning" | "error";
+    message: string;
+  } | null>(null);
   const setCommentSelections = useUploadStore(
     (state) => state.setCommentSelections
   );
@@ -482,11 +639,48 @@ export default function InspectionResults({
   const getCommentValue = (differenceId: number) =>
     commentSelections[differenceId] ?? "None";
 
+  const persistDifferenceComment = async (
+    differenceId: number,
+    configuredComment: string,
+    userComment: string
+  ) => {
+    // Ephemeral inspections use a generated session ID, not a persisted
+    // inspection record accepted by the owner-verified comment endpoint.
+    if (!/^INS-/i.test(result.inspectionId)) {
+      setCommentSaveFeedback({
+        severity: "warning",
+        message: "This comment is only available for the current session.",
+      });
+      return;
+    }
+
+    try {
+      await updateInspectionDifferenceComment(
+        result.inspectionId,
+        differenceId,
+        { configuredComment, userComment }
+      );
+      setCommentSaveFeedback(null);
+    } catch (error) {
+      console.error("[DIFF-COMMENT] Failed to save comment:", error);
+      setCommentSaveFeedback({
+        severity: "error",
+        message: "Comment could not be saved. Please try again.",
+      });
+    }
+  };
+
   const handleCommentChange = (differenceId: number, value: string) => {
     setCommentSelections({
       ...commentSelections,
       [differenceId]: value,
     });
+
+    void persistDifferenceComment(
+      differenceId,
+      value === "None" ? "" : value,
+      value === "None" ? "" : value
+    );
 
     // Audit: record comment/status selection on a difference (best-effort).
     void logAuditEvent({
@@ -508,6 +702,12 @@ export default function InspectionResults({
       ...levelSelections,
       [differenceId]: value,
     });
+
+    if (value) {
+      handleCommentChange(differenceId, "Reviewed");
+    } else {
+      handleCommentChange(differenceId, "None");
+    }
 
     // Audit: record level assignment on a difference (best-effort).
     void logAuditEvent({
@@ -546,8 +746,10 @@ export default function InspectionResults({
         const restored: Record<number, string> = {};
         for (const entry of saved) {
           const userComment = (entry.userComment ?? "").trim();
-          if (userComment) {
-            restored[entry.differenceId] = userComment;
+          const configuredComment = (entry.configuredComment ?? "").trim();
+          const comment = userComment || configuredComment;
+          if (comment) {
+            restored[entry.differenceId] = comment;
           }
         }
         if (Object.keys(restored).length > 0) {
@@ -587,22 +789,11 @@ export default function InspectionResults({
 
       // Persist the user comment so it survives across sessions and is
       // included when the PDF report is regenerated later.
-      const inspectionId = result.inspectionId;
-      if (inspectionId) {
-        void updateInspectionDifferenceComment(
-          inspectionId,
-          differenceId,
-          {
-            configuredComment: editingPlaceholder,
-            userComment: trimmed,
-          }
-        ).catch((error) => {
-          console.warn(
-            "[DIFF-COMMENT] Failed to persist user comment:",
-            error
-          );
-        });
-      }
+      void persistDifferenceComment(
+        differenceId,
+        editingPlaceholder,
+        trimmed
+      );
     }
     setEditingCommentId(null);
     setEditingCommentText("");
@@ -774,6 +965,14 @@ export default function InspectionResults({
 
   const differenceListWindowRef = useRef<Window | null>(null);
 
+  useEffect(
+    () =>
+      subscribeToStateRequests(() => {
+        broadcastStateUpdate(useUploadStore.getState());
+      }),
+    []
+  );
+
   const handleOpenDifferenceList = () => {
     console.log("[DIFFERENCE LIST] Button clicked");
     console.log("[DIFFERENCE LIST] Current differences:", result.differences.length);
@@ -815,12 +1014,12 @@ export default function InspectionResults({
   /* Character-level difference alignment                               */
   /* ------------------------------------------------------------------ */
 
-  const masterText = selectedDifferenceData?.master ?? "";
-  const sampleText = selectedDifferenceData?.sample ?? "";
+  const masterText = isBraille ? "" : selectedDifferenceData?.master ?? "";
+  const sampleText = isBraille ? "" : selectedDifferenceData?.sample ?? "";
 
   const characterDifferences = useMemo(
-    () => calculateCharacterDifferences(masterText, sampleText),
-    [masterText, sampleText]
+    () => isBraille ? [] : calculateCharacterDifferences(masterText, sampleText),
+    [isBraille, masterText, sampleText]
   );
 
   const selectedCharacter =
@@ -1011,13 +1210,13 @@ export default function InspectionResults({
       sx={{
         width: "100%",
         minHeight: "calc(100vh - 72px)",
-        height: "auto",
+        height: isBraille ? "calc(100vh - 72px)" : "auto",
         position: "relative",
         bgcolor: "#ffffff",
         display: "flex",
         flexDirection: "column",
         overflowX: "hidden",
-        overflowY: "visible",
+        overflowY: isBraille ? "hidden" : "visible",
         gap: 1,
       }}
     >
@@ -1025,7 +1224,7 @@ export default function InspectionResults({
           RESULT HEADER
          ========================================================= */}
 
-      {isBarcode ? (
+      {isSingleDocument ? (
         <Box
           sx={{
             height: 44,
@@ -1039,26 +1238,23 @@ export default function InspectionResults({
             flexShrink: 0,
           }}
         >
-          <Button
-            size="small"
-            variant={barcodeFindingsOpen ? "contained" : "outlined"}
-            onClick={() => setBarcodeFindingsOpen((open) => !open)}
-            sx={{
-              minWidth: 58,
-              height: 32,
-              textTransform: "none",
-              color: barcodeFindingsOpen ? "#fff" : "#2A276E",
-              borderColor: "#2A276E",
-              bgcolor: barcodeFindingsOpen ? "#2A276E" : "transparent",
-            }}
-          >
-            Start
-          </Button>
-          {/*
-            No second start control here. The only control that starts
-            Barcode Inspection is the blue "Inspect" button in the
-            Barcode Inspection configuration panel.
-          */}
+            {isBarcode && (
+              <Button
+              size="small"
+              variant={barcodeFindingsOpen ? "contained" : "outlined"}
+              onClick={() => setBarcodeFindingsOpen((open) => !open)}
+              sx={{
+                minWidth: 58,
+                height: 32,
+                textTransform: "none",
+                color: barcodeFindingsOpen ? "#fff" : "#2A276E",
+                borderColor: "#2A276E",
+                bgcolor: barcodeFindingsOpen ? "#2A276E" : "transparent",
+              }}
+            >
+              Start
+            </Button>
+          )}
           <Typography
             variant="body2"
             noWrap
@@ -1068,6 +1264,67 @@ export default function InspectionResults({
             <Box component="span" sx={{ fontWeight: 700 }}>Filename:</Box>{" "}
             {truncateFileName(result.masterFileName, 34)}
           </Typography>
+          {isBraille && (
+            <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+              <Tooltip title="Share report" arrow slotProps={DARK_BLUE_TOOLTIP_SLOT_PROPS}>
+                <IconButton
+                  size="small"
+                  onClick={handleShareOpen}
+                  sx={{
+                    bgcolor: "#2A276E",
+                    color: "#ffffff",
+                    "&:hover": { bgcolor: "#1f1d57" },
+                  }}
+                >
+                  <ShareIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+              <Tooltip title="Zoom level" arrow slotProps={DARK_BLUE_TOOLTIP_SLOT_PROPS}>
+                <IconButton
+                  size="small"
+                  aria-label="Open zoom level menu"
+                  onClick={() => brailleOpenZoomMenuRef.current?.()}
+                  sx={{
+                    bgcolor: "#2A276E",
+                    color: "#ffffff",
+                    "&:hover": { bgcolor: "#1f1d57" },
+                  }}
+                >
+                  <ZoomInIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+              <Tooltip title="Annotation list" arrow slotProps={DARK_BLUE_TOOLTIP_SLOT_PROPS}>
+                <Button
+                  size="small"
+                  aria-label="Toggle Braille annotation list"
+                  aria-pressed={brailleFindingsOpen}
+                  onClick={() => setBrailleFindingsOpen((open) => !open)}
+                  startIcon={<FormatListBulletedIcon fontSize="small" />}
+                  sx={{
+                    bgcolor: brailleFindingsOpen ? "#2A276E" : "#e8e9f2",
+                    color: brailleFindingsOpen ? "#ffffff" : "#2A276E",
+                    "&:hover": { bgcolor: brailleFindingsOpen ? "#1f1d57" : "#d9daeb" },
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  Annotation list
+                </Button>
+              </Tooltip>
+              <Tooltip title="Download the PDF report" arrow slotProps={DARK_BLUE_TOOLTIP_SLOT_PROPS}>
+                <IconButton
+                  size="small"
+                  onClick={handleDownloadClick}
+                  sx={{
+                    bgcolor: "#2A276E",
+                    color: "#ffffff",
+                    "&:hover": { bgcolor: "#1f1d57" },
+                  }}
+                >
+                  <DownloadIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            </Box>
+          )}
         </Box>
       ) : (
         <Box
@@ -1303,6 +1560,54 @@ export default function InspectionResults({
               flexShrink: 0,
             }}
           >
+            {isBraille && (
+              <>
+                <TextField
+                  size="small"
+                  type="number"
+                  value={brailleGoToId}
+                  onChange={(event) => {
+                    setBrailleGoToId(event.target.value);
+                    setBrailleGoToError("");
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      handleBrailleGoToId();
+                    }
+                  }}
+                  placeholder="Go to ID"
+                  aria-label="Go to finding ID"
+                  slotProps={{ htmlInput: { min: 1, step: 1 } }}
+                  sx={{
+                    width: 110,
+                    mx: 0.5,
+                    "& .MuiInputBase-root": { height: 30, fontSize: 13 },
+                  }}
+                />
+                <Button
+                  size="small"
+                  onClick={handleBrailleGoToId}
+                  sx={{
+                    minWidth: 42,
+                    px: 1,
+                    color: "#2A276E",
+                    textTransform: "none",
+                    fontWeight: 600,
+                  }}
+                >
+                  Go
+                </Button>
+                {brailleGoToError && (
+                  <Typography
+                    role="alert"
+                    variant="caption"
+                    sx={{ ml: 0.5, color: "error.main", whiteSpace: "nowrap" }}
+                  >
+                    {brailleGoToError}
+                  </Typography>
+                )}
+              </>
+            )}
             <IconButton size="small">
               <GridViewOutlinedIcon fontSize="small" />
             </IconButton>
@@ -1368,7 +1673,16 @@ export default function InspectionResults({
           DIFFERENCE TABLE
          ========================================================= */}
 
-          <Collapse in={!isBarcode || barcodeDetailsOpen} unmountOnExit>
+          <Collapse
+            in={
+              isBarcode
+                ? barcodeDetailsOpen
+                : isBraille
+                  ? brailleFindingsOpen
+                  : true
+            }
+            unmountOnExit
+          >
             <TableContainer
               component={Paper}
               elevation={0}
@@ -1418,7 +1732,7 @@ export default function InspectionResults({
                         borderBottom: "1px solid #cdd2d7",
                       }}
                     >
-                      Type
+                      {isBraille ? "Status" : "Type"}
                     </TableCell>
 
                     <TableCell
@@ -1430,20 +1744,22 @@ export default function InspectionResults({
                         borderBottom: "1px solid #cdd2d7",
                       }}
                     >
-                      Master
+                      {isBraille ? "Decoded Value" : "Master"}
                     </TableCell>
 
-                    <TableCell
-                      sx={{
-                        minWidth: 250,
-                        bgcolor: "#f3f5f7",
-                        fontWeight: 700,
-                        color: "#50575e",
-                        borderBottom: "1px solid #cdd2d7",
-                      }}
-                    >
-                      Sample
-                    </TableCell>
+                    {!isBraille && (
+                      <TableCell
+                        sx={{
+                          minWidth: 250,
+                          bgcolor: "#f3f5f7",
+                          fontWeight: 700,
+                          color: "#50575e",
+                          borderBottom: "1px solid #cdd2d7",
+                        }}
+                      >
+                        Sample
+                      </TableCell>
+                    )}
 
                     <TableCell
                       sx={{
@@ -1480,13 +1796,17 @@ export default function InspectionResults({
                         key={difference.id}
                         hover
                         selected={isSelected}
-                        // NOTE: navigation is intentionally NOT on the row. Only
-                        // the ID / Master / Sample cells jump to the difference in
-                        // the PDF viewers below — clicking inside the Level or
-                        // Comment cells (to pick a level/comment) must never
-                        // redirect the viewers (user-experience bug fix).
+                        onClick={
+                          isBraille
+                            ? () => handleSelect(difference)
+                            : undefined
+                        }
+                        // Text comparisons navigate from value cells so controls
+                        // remain interactive. Braille regions select from any
+                        // part of the row.
                         sx={{
                           bgcolor: isSelected ? "rgba(42, 39, 110, 0.06)" : "transparent",
+                          cursor: isBraille ? "pointer" : undefined,
 
                           "&:hover": {
                             bgcolor: isSelected ? "rgba(42, 39, 110, 0.08)" : "#edf3ff",
@@ -1498,7 +1818,11 @@ export default function InspectionResults({
                         </TableCell>
 
                         <TableCell
-                          onClick={() => handleSelect(difference)}
+                          onClick={
+                            isBraille
+                              ? undefined
+                              : () => handleSelect(difference)
+                          }
                           sx={{
                             fontSize: 14,
                             color: "#535a62",
@@ -1509,18 +1833,28 @@ export default function InspectionResults({
                         </TableCell>
 
                         <TableCell
-                          onClick={() => handleSelect(difference)}
+                          onClick={
+                            isBraille
+                              ? undefined
+                              : () => handleSelect(difference)
+                          }
                           sx={{
                             fontSize: 14,
                             color: "#535a62",
                             cursor: "pointer",
                           }}
                         >
-                          {difference.type}
+                          {isBraille
+                            ? getBrailleFindingStatus(difference.brailleMetrics)
+                            : difference.type}
                         </TableCell>
 
                         <TableCell
-                          onClick={() => handleSelect(difference)}
+                          onClick={
+                            isBraille
+                              ? undefined
+                              : () => handleSelect(difference)
+                          }
                           sx={{
                             fontSize: 14,
                             color: "#535a62",
@@ -1535,21 +1869,23 @@ export default function InspectionResults({
                           {difference.master}
                         </TableCell>
 
-                        <TableCell
-                          onClick={() => handleSelect(difference)}
-                          sx={{
-                            fontSize: 14,
-                            color: "#535a62",
-                            maxWidth: 300,
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                            cursor: "pointer",
-                          }}
-                          title={difference.sample}
-                        >
-                          {difference.sample}
-                        </TableCell>
+                        {!isBraille && (
+                          <TableCell
+                            onClick={() => handleSelect(difference)}
+                            sx={{
+                              fontSize: 14,
+                              color: "#535a62",
+                              maxWidth: 300,
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                              cursor: "pointer",
+                            }}
+                            title={difference.sample}
+                          >
+                            {difference.sample}
+                          </TableCell>
+                        )}
 
                         <TableCell>
                           <FormControl size="small" fullWidth>
@@ -1711,7 +2047,9 @@ export default function InspectionResults({
           SELECTED DIFFERENCE DETAILS
          ========================================================= */}
 
-          {selectedDifferenceData && (!isBarcode || barcodeDetailsOpen) && (
+          {selectedDifferenceData &&
+            !isBraille &&
+            (!isBarcode || barcodeDetailsOpen) && (
             <Box
               sx={{
                 border: "1px solid #d5d9dd",
@@ -1893,19 +2231,36 @@ export default function InspectionResults({
               bgcolor: "#f5f5f5",
               overflow: "hidden",
               minHeight: 0,
-              gap: !isBarcode && selectedDifferenceData ? 2 : 0,
+              gap: !isSingleDocument && selectedDifferenceData ? 2 : 0,
             }}
           >
             <Box sx={{ flex: 1, overflow: "hidden", minWidth: 0 }}>
               <ViewerPane
-                title={isBarcode ? "" : "Master Artwork"}
+                title={isSingleDocument ? "" : "Master Artwork"}
                 file={masterFile}
                 inspectionType={result.inspectionType}
                 side="master"
-                selectedDifference={selectedDifferenceData}
-                hideHeader={isBarcode}
-                compactViewer={isBarcode}
-                onOverlayClick={() => setBarcodeDetailsOpen(true)}
+                selectedDifference={viewerDifference}
+                onRegisterZoomMenu={
+                  isBraille
+                    ? (openMenu) => {
+                        brailleOpenZoomMenuRef.current = openMenu;
+                      }
+                    : undefined
+                }
+                zeroBasedPageIndex={isBraille ? true : undefined}
+                hideHeader={isSingleDocument}
+                compactViewer={isSingleDocument}
+                onOverlayClick={(difference) => {
+                  if (isBraille) {
+                    handleSelect(difference);
+                  } else {
+                    setBarcodeDetailsOpen(true);
+                  }
+                }}
+                connectorTargetRect={
+                  isBraille ? brailleConnectorTargetRect : undefined
+                }
                 onToggleSidebar={isBarcode ? () => setBarcodeFindingsOpen((open) => !open) : undefined}
                 sidebarOpen={barcodeFindingsOpen}
                 onDocumentAction={isBarcode ? () => setBarcodeFindingsOpen(true) : undefined}
@@ -1927,7 +2282,176 @@ export default function InspectionResults({
                 onCropComplete={handleCropComplete}
               />
             </Box>
-            {!isBarcode && (
+            {isBraille && (
+              <Box
+                data-testid="braille-details-sidebar"
+                sx={{
+                  width: { xs: 280, md: 310 },
+                  flexShrink: 0,
+                  minHeight: 0,
+                  display: "flex",
+                  flexDirection: "column",
+                  overflowY: "hidden",
+                  overflowX: "hidden",
+                  borderLeft: "1px solid #d5d9dd",
+                  bgcolor: "#ffffff",
+                }}
+              >
+                <Box
+                  sx={{
+                    px: 1.5,
+                    py: 1.25,
+                    borderBottom: "1px solid #d5d9dd",
+                    flexShrink: 0,
+                  }}
+                >
+                  <Typography
+                    variant="subtitle2"
+                    sx={{ color: "#2A276E", fontWeight: 700 }}
+                  >
+                    Comments / Additional Information
+                  </Typography>
+                </Box>
+
+                <Box sx={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+                  {result.differences.map((difference) => {
+                    const metrics = difference.brailleMetrics;
+                    const translation =
+                      difference.decodedValue || difference.master;
+                    const review = getCommentValue(difference.id);
+                    const level = getLevelValue(difference.id);
+                    const comment = difference.comment ?? "";
+                    const status = getBrailleFindingStatus(metrics);
+                    const legacyMetric = (label: string) => {
+                      const match = comment.match(
+                        new RegExp(`\\b(\\d+(?:\\.\\d+)?)\\s+${label}\\b`, "i")
+                      );
+                      return match ? Number(match[1]) : undefined;
+                    };
+                    const details: Array<[string, string | number | null | undefined]> = [
+                      ["Language", result.brailleLanguage || "Unavailable"],
+                      ["Status", status],
+                      ["Lines", metrics?.lines ?? legacyMetric("lines") ?? "Unavailable"],
+                      [
+                        "Characters",
+                        metrics?.characters ??
+                          legacyMetric("characters") ??
+                          "Unavailable",
+                      ],
+                      ["Dots", metrics?.dots ?? legacyMetric("dots") ?? "Unavailable"],
+                      ["Dot H", metrics?.dotHMillimeters ?? "Unavailable"],
+                      ["Dot V", metrics?.dotVMillimeters ?? "Unavailable"],
+                      ["Character", metrics?.characterMillimeters ?? "Unavailable"],
+                      ["Word", metrics?.wordMillimeters ?? "Unavailable"],
+                      ["Line", metrics?.lineMillimeters ?? "Unavailable"],
+                    ];
+
+                    return (
+                      <ButtonBase
+                        key={difference.id}
+                        ref={(element) => {
+                          if (element) {
+                            brailleFindingRefs.current.set(difference.id, element);
+                          } else {
+                            brailleFindingRefs.current.delete(difference.id);
+                          }
+                        }}
+                        data-testid={`braille-finding-${difference.id}`}
+                        aria-pressed={effectiveSelectedId === difference.id}
+                        onClick={() => handleSelect(difference)}
+                        sx={{
+                          display: "block",
+                          width: "100%",
+                          px: 1.5,
+                          py: 1,
+                          borderBottom: "1px solid #e5e7eb",
+                          borderLeft:
+                            effectiveSelectedId === difference.id
+                              ? "3px solid #2A276E"
+                              : "3px solid transparent",
+                          bgcolor:
+                            effectiveSelectedId === difference.id
+                              ? "rgba(42, 39, 110, 0.08)"
+                              : "#ffffff",
+                          textAlign: "left",
+                          "&:hover": { bgcolor: "rgba(42, 39, 110, 0.05)" },
+                        }}
+                      >
+                        <Typography
+                          component="div"
+                          sx={{
+                            mb: 0.4,
+                            color: "#2A276E",
+                            fontSize: 12,
+                            fontWeight: 700,
+                            lineHeight: 1.35,
+                          }}
+                        >
+                          Finding {difference.id}
+                          {typeof difference.page === "number"
+                            ? ` · Page ${difference.page + 1}`
+                            : ""}
+                        </Typography>
+                        {details.map(([label, value]) => (
+                            <Typography
+                              key={label}
+                              component="div"
+                              sx={{
+                                color: "#343a40",
+                                fontSize: 12,
+                                lineHeight: 1.4,
+                                overflowWrap: "anywhere",
+                              }}
+                            >
+                              {label}: {String(value)}
+                            </Typography>
+                          ))}
+                        <Typography
+                          component="div"
+                          sx={{
+                            mt: 0.3,
+                            color: "#343a40",
+                            fontSize: 12,
+                            lineHeight: 1.4,
+                          }}
+                        >
+                          Translation:
+                        </Typography>
+                        <Typography
+                          component="div"
+                          sx={{
+                            color: "#343a40",
+                            fontSize: 12,
+                            lineHeight: 1.4,
+                            whiteSpace: "pre-wrap",
+                            overflowWrap: "anywhere",
+                          }}
+                        >
+                          {translation || "Unavailable"}
+                        </Typography>
+                        {review !== "None" && (
+                          <Typography
+                            component="div"
+                            sx={{ color: "#555d66", fontSize: 12, lineHeight: 1.4 }}
+                          >
+                            Review: {review}
+                          </Typography>
+                        )}
+                        {level && (
+                          <Typography
+                            component="div"
+                            sx={{ color: "#555d66", fontSize: 12, lineHeight: 1.4 }}
+                          >
+                            Level: {level}
+                          </Typography>
+                        )}
+                      </ButtonBase>
+                    );
+                  })}
+                </Box>
+              </Box>
+            )}
+            {!isSingleDocument && (
               <Box sx={{ flex: 1, overflow: "hidden", minWidth: 0 }}>
                 <ViewerPane
                   title="Sample Artwork"
@@ -1954,7 +2478,7 @@ export default function InspectionResults({
           CHARACTER DIFFERENCE PANEL (BOTTOM)
          ========================================================= */}
 
-          {selectedDifferenceData && (
+          {selectedDifferenceData && !isBraille && (
             <Box
               sx={{
                 borderTop: "1px solid #d5d9dd",
@@ -2384,6 +2908,24 @@ export default function InspectionResults({
             </Alert>
           </Snackbar>
 
+          <Snackbar
+            open={Boolean(commentSaveFeedback && commentSaveFeedback.severity !== "success")}
+            autoHideDuration={4000}
+            onClose={() => setCommentSaveFeedback(null)}
+            anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+          >
+            {commentSaveFeedback ? (
+              <Alert
+                onClose={() => setCommentSaveFeedback(null)}
+                severity={commentSaveFeedback.severity}
+                variant="filled"
+                sx={{ width: "100%" }}
+              >
+                {commentSaveFeedback.message}
+              </Alert>
+            ) : undefined}
+          </Snackbar>
+
           {/* =========================================================
           CROP COMPARE RESULTS DIALOG
           Shows region-scoped findings from the crop pipeline — kept
@@ -2455,9 +2997,66 @@ export default function InspectionResults({
                       sx={{ fontWeight: 600, color: "#3f4650" }}
                     >
                       {cropResult.findings.length}{" "}
-                      {cropResult.findings.length === 1 ? "finding" : "findings"} in
+                      {cropResult.findings.length === 1 ? "difference" : "differences"} found in this region
+                    </Typography>
+                    <Typography variant="caption" sx={{ color: "#68717b" }}>
+                      {cropResult.match_stats.matched_pairs} matched ·{" "}
+                      {cropResult.match_stats.unmatched_master} missing in sample ·{" "}
+                      {cropResult.match_stats.unmatched_sample} extra in sample
                     </Typography>
                   </Box>
+                  {cropResult.findings.length > 0 ? (
+                    <TableContainer sx={{ maxHeight: 420, overflow: "auto" }}>
+                      <Table stickyHeader size="small" sx={{ minWidth: 760 }}>
+                        <TableHead>
+                          <TableRow>
+                            {["ID", "Type", "Master", "Sample", "Comment"].map((label) => (
+                              <TableCell
+                                key={label}
+                                sx={{
+                                  bgcolor: "#f3f5f7",
+                                  color: "#50575e",
+                                  fontWeight: 700,
+                                  borderBottom: "1px solid #cdd2d7",
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                {label}
+                              </TableCell>
+                            ))}
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {cropResult.findings.map((finding) => (
+                            <TableRow key={finding.id} hover>
+                              <TableCell sx={{ whiteSpace: "nowrap" }}>
+                                {finding.id}
+                              </TableCell>
+                              <TableCell sx={{ whiteSpace: "nowrap" }}>
+                                {finding.type}
+                              </TableCell>
+                              <TableCell sx={{ minWidth: 180, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+                                {finding.master || "—"}
+                              </TableCell>
+                              <TableCell sx={{ minWidth: 180, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+                                {finding.sample || "—"}
+                              </TableCell>
+                              <TableCell sx={{ minWidth: 220, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+                                {finding.comment || "—"}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  ) : (
+                    <Typography
+                      role="status"
+                      sx={{ px: 2, py: 4, color: "#68717b", textAlign: "center" }}
+                    >
+                      No differences were found in this region.
+                    </Typography>
+                  )}
                 </Box>
               ) : null}
             </DialogContent>
@@ -2477,34 +3076,6 @@ export default function InspectionResults({
                 }}
               >
                 Cancel
-              </Button>
-
-              <Button
-                variant="contained"
-                onClick={() => {
-                  if (cropRegion) {
-                    void handleCropComplete(cropRegion.page, cropRegion.box);
-                  }
-                }}
-                disabled={cropRunning || !cropRegion}
-                startIcon={
-                  cropRunning ? (
-                    <CircularProgress size={16} color="inherit" />
-                  ) : undefined
-                }
-                sx={{
-                  textTransform: "none",
-                  bgcolor: "#2A276E",
-                  "&:hover": {
-                    bgcolor: "#1f1d57",
-                  },
-                  "&.Mui-disabled": {
-                    bgcolor: "#d9d9d9",
-                    color: "#8a8a8a",
-                  },
-                }}
-              >
-                {cropRunning ? "Running..." : "Complete"}
               </Button>
             </DialogActions>
           </Dialog>
