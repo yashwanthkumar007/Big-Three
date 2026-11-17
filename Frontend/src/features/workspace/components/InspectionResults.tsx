@@ -191,6 +191,20 @@ const DARK_BLUE_TOOLTIP_SLOT_PROPS = {
   },
 } as const;
 
+/**
+ * Maps an inspection type to the module name used in audit trail entries,
+ * so barcode, braille and other inspection types are logged under their own
+ * module instead of always showing "Text Inspection".
+ */
+const INSPECTION_MODULE_NAMES: Record<InspectionType, string> = {
+  text: "Text Inspection",
+  graphics: "Graphics Inspection",
+  spelling: "Spelling Inspection",
+  braille: "Braille Inspection",
+  barcode: "Barcode Inspection",
+  notes: "Notes Inspection",
+};
+
 
 /**
  * Ligature normalization for the character-comparison layer ONLY.
@@ -453,6 +467,15 @@ export default function InspectionResults({
   const isBarcode = result.inspectionType === "barcode";
   const isBraille = result.inspectionType === "braille";
   const isSingleDocument = isBarcode || isBraille;
+  const isDocxPdfTextComparison =
+    result.inspectionType === "text" &&
+    ((masterFile.name.toLowerCase().endsWith(".docx") &&
+      sampleFile.name.toLowerCase().endsWith(".pdf")) ||
+      (masterFile.name.toLowerCase().endsWith(".pdf") &&
+        sampleFile.name.toLowerCase().endsWith(".docx")));
+  const pdfComparisonSide = masterFile.name.toLowerCase().endsWith(".pdf")
+    ? "master"
+    : "sample";
   const brailleFindingRefs = useRef(new Map<number, HTMLButtonElement>());
   const [brailleConnectorTargetRect, setBrailleConnectorTargetRect] = useState<{
     findingId: number;
@@ -686,7 +709,7 @@ export default function InspectionResults({
     void logAuditEvent({
       event: "DIFFERENCE_COMMENT_UPDATED",
       action: "Update Difference Comment",
-      module: "Text Inspection",
+      module: INSPECTION_MODULE_NAMES[result.inspectionType],
       description: `Comment updated for difference ${differenceId} to "${value}".`,
       inspectionId: result.inspectionId,
       differenceId,
@@ -713,7 +736,7 @@ export default function InspectionResults({
     void logAuditEvent({
       event: "DIFFERENCE_LEVEL_CHANGED",
       action: "Update Level",
-      module: "Text Inspection",
+      module: INSPECTION_MODULE_NAMES[result.inspectionType],
       description: `Level updated for difference ${differenceId} to "${value}".`,
       inspectionId: result.inspectionId,
       differenceId,
@@ -983,7 +1006,7 @@ export default function InspectionResults({
     void logAuditEvent({
       event: "DIFFERENCE_VIEWED",
       action: "View Difference List",
-      module: "Text Inspection",
+      module: INSPECTION_MODULE_NAMES[result.inspectionType],
       description: `Difference list opened. Inspection ID=${result.inspectionId}`,
       inspectionId: result.inspectionId,
       metadata: { totalDifferences: result.differences.length },
@@ -1274,6 +1297,14 @@ export default function InspectionResults({
                     bgcolor: "#2A276E",
                     color: "#ffffff",
                     "&:hover": { bgcolor: "#1f1d57" },
+                    width: 32,
+                    height: 32,
+                    minWidth: 32,
+                    borderRadius: "50%",
+                    padding: 0,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
                   }}
                 >
                   <ShareIcon fontSize="small" />
@@ -1288,6 +1319,14 @@ export default function InspectionResults({
                     bgcolor: "#2A276E",
                     color: "#ffffff",
                     "&:hover": { bgcolor: "#1f1d57" },
+                    width: 32,
+                    height: 32,
+                    minWidth: 32,
+                    borderRadius: "50%",
+                    padding: 0,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
                   }}
                 >
                   <ZoomInIcon fontSize="small" />
@@ -1299,15 +1338,22 @@ export default function InspectionResults({
                   aria-label="Toggle Braille annotation list"
                   aria-pressed={brailleFindingsOpen}
                   onClick={() => setBrailleFindingsOpen((open) => !open)}
-                  startIcon={<FormatListBulletedIcon fontSize="small" />}
                   sx={{
                     bgcolor: brailleFindingsOpen ? "#2A276E" : "#e8e9f2",
                     color: brailleFindingsOpen ? "#ffffff" : "#2A276E",
                     "&:hover": { bgcolor: brailleFindingsOpen ? "#1f1d57" : "#d9daeb" },
                     whiteSpace: "nowrap",
+                    width: 32,
+                    height: 32,
+                    minWidth: 32,
+                    borderRadius: "50%",
+                    padding: 0,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
                   }}
                 >
-                  Annotation list
+                  <FormatListBulletedIcon fontSize="small" />
                 </Button>
               </Tooltip>
               <Tooltip title="Download the PDF report" arrow slotProps={DARK_BLUE_TOOLTIP_SLOT_PROPS}>
@@ -1318,6 +1364,14 @@ export default function InspectionResults({
                     bgcolor: "#2A276E",
                     color: "#ffffff",
                     "&:hover": { bgcolor: "#1f1d57" },
+                    width: 32,
+                    height: 32,
+                    minWidth: 32,
+                    borderRadius: "50%",
+                    padding: 0,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
                   }}
                 >
                   <DownloadIcon fontSize="small" />
@@ -1790,6 +1844,9 @@ export default function InspectionResults({
                 <TableBody>
                   {result.differences.map((difference) => {
                     const isSelected = effectiveSelectedId === difference.id;
+                    const isProductionTableFinding =
+                      difference.comment ===
+                      "Additional production artwork table in sample";
 
                     return (
                       <TableRow
@@ -1864,7 +1921,6 @@ export default function InspectionResults({
                             whiteSpace: "nowrap",
                             cursor: "pointer",
                           }}
-                          title={difference.master}
                         >
                           {difference.master}
                         </TableCell>
@@ -1877,13 +1933,31 @@ export default function InspectionResults({
                               color: "#535a62",
                               maxWidth: 300,
                               overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              whiteSpace: "nowrap",
                               cursor: "pointer",
                             }}
-                            title={difference.sample}
                           >
-                            {difference.sample}
+                            <Box
+                              component="span"
+                              sx={{
+                                display: isProductionTableFinding
+                                  ? "-webkit-box"
+                                  : "block",
+                                overflow: "hidden",
+                                ...(isProductionTableFinding
+                                  ? {
+                                      WebkitBoxOrient: "vertical",
+                                      WebkitLineClamp: 3,
+                                      whiteSpace: "pre-wrap",
+                                      overflowWrap: "anywhere",
+                                    }
+                                  : {
+                                      textOverflow: "ellipsis",
+                                      whiteSpace: "nowrap",
+                                    }),
+                              }}
+                            >
+                              {difference.sample}
+                            </Box>
                           </TableCell>
                         )}
 
@@ -2241,6 +2315,9 @@ export default function InspectionResults({
                 inspectionType={result.inspectionType}
                 side="master"
                 selectedDifference={viewerDifference}
+                scrollToSelectedFinding={
+                  isDocxPdfTextComparison && pdfComparisonSide === "master"
+                }
                 onRegisterZoomMenu={
                   isBraille
                     ? (openMenu) => {
@@ -2459,6 +2536,9 @@ export default function InspectionResults({
                   inspectionType={result.inspectionType}
                   side="sample"
                   selectedDifference={selectedDifferenceData}
+                  scrollToSelectedFinding={
+                    isDocxPdfTextComparison && pdfComparisonSide === "sample"
+                  }
                   naturalWidth={
                     result.pages?.find(
                       (p) => p.page === (selectedDifferenceData?.page ?? 0)

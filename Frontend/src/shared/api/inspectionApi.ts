@@ -162,6 +162,9 @@ export type InspectionMeta = {
   completedAt: string | null;
   failedReason?: string | null;
   resultId: string | null;
+  /** Background barcode job and its durable results, when applicable. */
+  barcodeJobId?: string | null;
+  barcodeResults?: BarcodeJobResult[] | null;
   result?: { resultId: string; report: InspectionReport };
 };
 

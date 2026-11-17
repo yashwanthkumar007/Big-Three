@@ -102,7 +102,9 @@ from src.audit_constants import (
     MODULE_AUTHENTICATION,
     MODULE_USER_MANAGEMENT,
     MODULE_TEXT_INSPECTION,
+    MODULE_GRAPHICS_INSPECTION,
     MODULE_BARCODE_INSPECTION,
+    MODULE_BRAILLE_INSPECTION,
     MODULE_REPORT,
     MODULE_SYSTEM_SETUP,
     MODULE_AUDIT_TRAIL,
@@ -118,6 +120,19 @@ UPLOAD_ROOT = os.path.join("webapp_uploads")
 OUTPUT_ROOT = os.path.join("webapp_outputs")
 os.makedirs(UPLOAD_ROOT, exist_ok=True)
 os.makedirs(OUTPUT_ROOT, exist_ok=True)
+
+
+def get_inspection_module_name(inspection_type: str | None) -> str:
+    """Map an inspection type to its audit trail module name."""
+    mapping = {
+        "text": MODULE_TEXT_INSPECTION,
+        "graphics": MODULE_GRAPHICS_INSPECTION,
+        "barcode": MODULE_BARCODE_INSPECTION,
+        "braille": MODULE_BRAILLE_INSPECTION,
+        "spelling": MODULE_TEXT_INSPECTION,
+        "notes": MODULE_TEXT_INSPECTION,
+    }
+    return mapping.get((inspection_type or "text").strip().lower(), MODULE_TEXT_INSPECTION)
 
 # Barcode Inspection's own async API (create / poll / cancel). Registered on the
 # same app so the React client can use either the dedicated endpoints or the
@@ -160,6 +175,7 @@ def _barcode_state_mirror(job):
             stage="inspection_complete",
             completedAt=job.completed_at or now,
             barcodeCount=job.barcode_count,
+            barcodeResults=job.barcodes,
         )
     elif job.status == "cancelled":
         updates.update(status="cancelled", completedAt=job.completed_at or now)
@@ -1618,6 +1634,7 @@ def _inspection_to_client(record: dict, include_result: bool = False) -> dict:
         "completedAt": record.get("completedAt"),
         "failedReason": record.get("failedReason"),
         "resultId": record.get("resultId"),
+        "barcodeJobId": record.get("barcodeJobId"),
         # Real processing stage reported by the engine (barcode only today).
         "stage": record.get("stage"),
         # Barcode and Braille are single-file workflows: `inspectionFile` is
@@ -1630,6 +1647,7 @@ def _inspection_to_client(record: dict, include_result: bool = False) -> dict:
     }
     if include_result:
         client["result"] = record.get("result")
+        client["barcodeResults"] = record.get("barcodeResults")
     return client
 
 
@@ -1812,7 +1830,7 @@ def api_inspections():
         event=FILE_UPLOADED,
         action="File Upload",
         application=APPLICATION_MEDINSPECT,
-        module=MODULE_TEXT_INSPECTION,
+        module=get_inspection_module_name(inspection_type),
         authenticated_user=user,
         status=STATUS_SUCCESS,
         description=f"Master File uploaded. File={master.filename}",
@@ -1830,7 +1848,7 @@ def api_inspections():
             event=FILE_UPLOADED,
             action="File Upload",
             application=APPLICATION_MEDINSPECT,
-            module=MODULE_TEXT_INSPECTION,
+            module=get_inspection_module_name(inspection_type),
             authenticated_user=user,
             status=STATUS_SUCCESS,
             description=f"Sample File uploaded. File={sample.filename}",
@@ -1847,7 +1865,7 @@ def api_inspections():
         event=INSPECTION_CREATED,
         action="Create Inspection",
         application=APPLICATION_MEDINSPECT,
-        module=MODULE_TEXT_INSPECTION,
+        module=get_inspection_module_name(inspection_type),
         authenticated_user=user,
         status=STATUS_SUCCESS,
         description=f"Inspection created. Inspection ID={inspection_id}; Type={inspection_type}",
@@ -1896,7 +1914,7 @@ def api_inspection_by_id(inspection_id: str):
                 event=INSPECTION_VIEWED,
                 action="View Inspection",
                 application=APPLICATION_MEDINSPECT,
-                module=MODULE_TEXT_INSPECTION,
+                module=get_inspection_module_name(record.get("inspectionType", "")),
                 authenticated_user=user,
                 status=STATUS_SUCCESS,
                 description=f"Inspection viewed. Inspection ID={inspection_id}",
@@ -2196,7 +2214,7 @@ def api_inspect():
             event=INSPECTION_STARTED,
             action="Start Inspection",
             application=APPLICATION_MEDINSPECT,
-            module=MODULE_TEXT_INSPECTION,
+            module=get_inspection_module_name(inspection_type),
             authenticated_user=caller,
             status=STATUS_SUCCESS,
             description=f"Inspection started. Inspection ID={inspection_id}; Type={inspection_type}",
@@ -2222,7 +2240,7 @@ def api_inspect():
                 event=INSPECTION_FAILED,
                 action="Inspection Failed",
                 application=APPLICATION_MEDINSPECT,
-                module=MODULE_TEXT_INSPECTION,
+                module=get_inspection_module_name(inspection_type),
                 authenticated_user=caller,
                 status=STATUS_FAILED,
                 description=f"Inspection failed. Inspection ID={inspection_id}; Reason=Unknown inspection type",
@@ -2340,7 +2358,7 @@ def api_inspect():
                 event=INSPECTION_FAILED,
                 action="Inspection Failed",
                 application=APPLICATION_MEDINSPECT,
-                module=MODULE_TEXT_INSPECTION,
+                module=get_inspection_module_name(inspection_type),
                 authenticated_user=caller,
                 status=STATUS_FAILED,
                 description=f"Inspection failed. Inspection ID={inspection_id}; Reason={config.label} failed during processing",
@@ -2411,7 +2429,7 @@ def api_inspect():
                 event=INSPECTION_COMPLETED,
                 action="Inspection Completed",
                 application=APPLICATION_MEDINSPECT,
-                module=MODULE_TEXT_INSPECTION,
+                module=get_inspection_module_name(inspection_type),
                 authenticated_user=caller,
                 status=STATUS_SUCCESS,
                 description=f"Inspection completed successfully. Inspection ID={inspection_id}",

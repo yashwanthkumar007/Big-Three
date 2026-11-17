@@ -16,6 +16,7 @@ type ViewerPaneProps = {
   inspectionType: string;
   side: "master" | "sample";
   selectedDifference?: InspectionDifference | null;
+  scrollToSelectedFinding?: boolean;
   naturalWidth?: number;
   naturalHeight?: number;
   zeroBasedPageIndex?: boolean;
@@ -57,6 +58,7 @@ export default function ViewerPane({
   inspectionType,
   side,
   selectedDifference,
+  scrollToSelectedFinding = false,
   naturalWidth,
   naturalHeight,
   zeroBasedPageIndex,
@@ -81,6 +83,11 @@ export default function ViewerPane({
  
   const [numPages, setNumPages] =
     useState(1);
+  const [docxFirstPageSkipped, setDocxFirstPageSkipped] = useState(false);
+  const [manualPageOverride, setManualPageOverride] = useState<{
+    selectionId: number | null;
+    page: number;
+  } | null>(null);
 
   useEffect(() => {
     onNumPagesChange?.(numPages);
@@ -114,23 +121,39 @@ export default function ViewerPane({
         )
       : 100;
 
+  const selectedBox =
+    side === "master"
+      ? selectedDifference?.masterBox ?? selectedDifference?.sampleBox
+      : selectedDifference?.sampleBox ?? selectedDifference?.masterBox;
+  const selectedBoxIsLarge =
+    Boolean(
+      selectedBox &&
+        naturalWidth &&
+        naturalHeight &&
+        (selectedBox.width / naturalWidth >= 0.6 ||
+          selectedBox.height / naturalHeight >= 0.15)
+    );
+
+  const selectedId = selectedDifference?.id ?? null;
   /*
    * ------------------------------------------------------------
-   * When a new difference is selected, zoom to 235% so the
-   * highlighted area is clearly visible. When it is deselected
-   * (clicking the same difference again), return to the normal
-   * fit-page zoom so the whole page is visible again. This uses
-   * the "adjusting state during render" pattern to avoid
-   * cascading renders from effects.
+   * Zoom closely for small findings, but keep large regions such as
+   * artwork tables at 100% so their highlight fits the viewer. When the
+   * selection is cleared, return to the normal fit-page zoom.
    * ------------------------------------------------------------
    */
   if ((selectedDifference?.id ?? null) !== lastSelectedId) {
     setLastSelectedId(selectedDifference?.id ?? null);
+    setManualPageOverride(null);
 
     if (selectedDifference) {
-      setZoom(235);
+      setZoom(selectedBoxIsLarge ? 100 : 235);
     } else {
-      setZoom(fitPageZoom);
+      setZoom(
+        scrollToSelectedFinding
+          ? Math.min(100, Math.max(80, fitPageZoom))
+          : fitPageZoom
+      );
     }
   }
  
@@ -154,10 +177,21 @@ export default function ViewerPane({
     // zeroBasedPageIndex at all.
     const isZeroBased = zeroBasedPageIndex ?? true;
 
-    return isZeroBased
+    const pageNumber = isZeroBased
       ? selectedDifference.page + 1
       : selectedDifference.page;
-  }, [selectedDifference, zeroBasedPageIndex]);
+    return file.name.toLowerCase().endsWith(".docx") &&
+      side === "master" &&
+      docxFirstPageSkipped
+      ? Math.max(1, pageNumber - 1)
+      : pageNumber;
+  }, [
+    selectedDifference,
+    zeroBasedPageIndex,
+    file.name,
+    side,
+    docxFirstPageSkipped,
+  ]);
  
   const clampPage = (page: number) => {
     if (numPages <= 0) {
@@ -166,12 +200,23 @@ export default function ViewerPane({
  
     return Math.max(1, Math.min(numPages, page));
   };
- 
+
+  const navigateToPage = (page: number) => {
+    const nextPage = clampPage(page);
+    setManualPageNumber(nextPage);
+    setManualPageOverride({
+      selectionId: selectedId,
+      page: nextPage,
+    });
+  };
+
   const effectivePageNumber =
     // Strict null check (not a truthy check) so page 1 — i.e. the
     // result of a 0-based page 0 — is never mistaken for "no page
     // selected" and dropped in favor of the manually-set page.
-    selectedPageNumber !== null && selectedPageNumber >= 1
+    manualPageOverride?.selectionId === selectedId
+      ? clampPage(manualPageOverride.page)
+      : selectedPageNumber !== null && selectedPageNumber >= 1
       ? clampPage(selectedPageNumber)
       : clampPage(manualPageNumber);
 
@@ -201,14 +246,14 @@ export default function ViewerPane({
 
     while (candidate >= 1 && candidate <= numPages) {
       if (isVisible(candidate)) {
-        setManualPageNumber(clampPage(candidate));
+        navigateToPage(candidate);
         return;
       }
 
       candidate += step;
     }
 
-    setManualPageNumber(clampPage(filter === "odd" ? 1 : 2));
+    navigateToPage(clampPage(filter === "odd" ? 1 : 2));
   };
 
   /**
@@ -318,7 +363,7 @@ export default function ViewerPane({
         zoom={zoom}
         onRegisterZoomMenu={onRegisterZoomMenu}
         onPageChange={(page) => {
-          setManualPageNumber(clampPage(page));
+          navigateToPage(page);
         }}
         onZoomChange={(nextZoom) => {
           setZoom(
@@ -343,6 +388,7 @@ export default function ViewerPane({
         onToggleFullscreen={onToggleFullscreen}
         onCancel={() => {
           setManualPageNumber(1);
+          setManualPageOverride(null);
           setSearchQuery("");
         }}
         hasSelection={Boolean(searchQuery)}
@@ -367,6 +413,7 @@ export default function ViewerPane({
           pageNumber={effectivePageNumber}
           zoom={zoom}
           onNumPagesChange={setNumPages}
+          onInitialBlankPageChange={setDocxFirstPageSkipped}
           inspectionType={inspectionType}
           side={side}
           selectedDifference={selectedDifference}
@@ -382,6 +429,7 @@ export default function ViewerPane({
           inspectionType={inspectionType}
           side={side}
           selectedDifference={selectedDifference}
+          scrollToSelectedFinding={scrollToSelectedFinding}
           naturalWidth={naturalWidth}
           naturalHeight={naturalHeight}
           zeroBasedPageIndex={zeroBasedPageIndex}

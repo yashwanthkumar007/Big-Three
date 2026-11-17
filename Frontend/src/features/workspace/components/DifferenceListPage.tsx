@@ -36,6 +36,20 @@ import {
   updateInspectionDifferenceComment,
 } from "@/features/admin/systemApi";
 
+/**
+ * Maps an inspection type to the module name used in audit trail entries,
+ * so barcode, braille and other inspection types are logged under their own
+ * module instead of always showing "Text Inspection".
+ */
+const INSPECTION_MODULE_NAMES: Record<string, string> = {
+  text: "Text Inspection",
+  graphics: "Graphics Inspection",
+  spelling: "Spelling Inspection",
+  braille: "Braille Inspection",
+  barcode: "Barcode Inspection",
+  notes: "Notes Inspection",
+};
+
 export default function DifferenceListPage() {
   /* ------------------------------------------------------------------ */
   /* Read from shared Zustand store (persisted + BroadcastChannel synced) */
@@ -45,6 +59,7 @@ export default function DifferenceListPage() {
   const masterFileName = useUploadStore((state) => state.masterFileName);
   const sampleFileName = useUploadStore((state) => state.sampleFileName);
   const sessionId = useUploadStore((state) => state.sessionId);
+  const inspectionType = useUploadStore((state) => state.inspectionType);
   const commentSelections = useUploadStore((state) => state.commentSelections);
   const levelSelections = useUploadStore((state) => state.levelSelections);
   const setCommentSelections = useUploadStore(
@@ -155,7 +170,7 @@ export default function DifferenceListPage() {
     void logAuditEvent({
       event: "DIFFERENCE_LEVEL_CHANGED",
       action: "Update Level",
-      module: "Text Inspection",
+      module: INSPECTION_MODULE_NAMES[inspectionType ?? "text"],
       description: `Level updated for difference ${differenceId} to "${value}".`,
       inspectionId: sessionId ?? undefined,
       differenceId,
@@ -177,7 +192,7 @@ export default function DifferenceListPage() {
     void logAuditEvent({
       event: "DIFFERENCE_COMMENT_UPDATED",
       action: "Update Difference Comment",
-      module: "Text Inspection",
+      module: INSPECTION_MODULE_NAMES[inspectionType ?? "text"],
       description: `Comment updated for difference ${differenceId} to "${value}".`,
       inspectionId: sessionId ?? undefined,
       differenceId,

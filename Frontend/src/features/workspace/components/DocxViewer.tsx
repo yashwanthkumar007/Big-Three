@@ -12,6 +12,7 @@ type DocxViewerProps = {
   pageNumber?: number;
   zoom?: number;
   onNumPagesChange?: (numPages: number) => void;
+  onInitialBlankPageChange?: (skipped: boolean) => void;
   /** Parity props mirrored from PdfViewer. */
   inspectionType?: string;
   side?: "master" | "sample";
@@ -21,6 +22,62 @@ type DocxViewerProps = {
   zeroBasedPageIndex?: boolean;
   cropMode?: boolean;
   onCropComplete?: (page0Based: number, box: BoundingBox) => void;
+};
+
+const findTextRange = (
+  root: HTMLElement,
+  searchText: string
+): Range | null => {
+  const needle = searchText.trim().replace(/\s+/g, " ").toLocaleLowerCase();
+  if (!needle) {
+    return null;
+  }
+
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const offsets: Array<{ node: Text; offset: number }> = [];
+  let normalizedText = "";
+  let lastWasSpace = false;
+  let currentNode = walker.nextNode();
+
+  while (currentNode) {
+    const textNode = currentNode as Text;
+    for (let offset = 0; offset < textNode.length; offset += 1) {
+      const character = textNode.data[offset];
+      if (/\s/.test(character)) {
+        if (normalizedText && !lastWasSpace) {
+          normalizedText += " ";
+          offsets.push({ node: textNode, offset });
+        }
+        lastWasSpace = true;
+        continue;
+      }
+
+      const foldedCharacter = character.toLocaleLowerCase();
+      for (let index = 0; index < foldedCharacter.length; index += 1) {
+        normalizedText += foldedCharacter[index];
+        offsets.push({ node: textNode, offset });
+      }
+      lastWasSpace = false;
+    }
+
+    currentNode = walker.nextNode();
+  }
+
+  const start = normalizedText.indexOf(needle);
+  if (start < 0) {
+    return null;
+  }
+
+  const startPosition = offsets[start];
+  const endPosition = offsets[start + needle.length - 1];
+  if (!startPosition || !endPosition) {
+    return null;
+  }
+
+  const range = document.createRange();
+  range.setStart(startPosition.node, startPosition.offset);
+  range.setEnd(endPosition.node, endPosition.offset + 1);
+  return range;
 };
 
 const getBoundingBox = (
@@ -43,6 +100,7 @@ export default function DocxViewer({
   pageNumber = 1,
   zoom = 100,
   onNumPagesChange,
+  onInitialBlankPageChange,
   side = "master",
   selectedDifference,
   cropMode,
@@ -51,6 +109,7 @@ export default function DocxViewer({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [numPages, setNumPages] = useState(1);
+  const pageSectionsRef = useRef<HTMLElement[]>([]);
 
   const cropEnabled = Boolean(cropMode) && side === "master";
   const showMissingCoordinatesNotice =
@@ -86,15 +145,27 @@ export default function DocxViewer({
         const sections = Array.from(
           container.querySelectorAll("section.docx")
         ) as HTMLElement[];
-        const count = Math.max(1, sections.length);
+        const firstPageIsBlank =
+          sections.length > 1 &&
+          !sections[0].textContent?.trim() &&
+          !sections[0].querySelector("img, svg, canvas, table, video, iframe, object, embed");
+        const pageSections = firstPageIsBlank
+          ? sections.slice(1)
+          : sections;
+        pageSectionsRef.current = pageSections;
 
-        // Show only the first page initially; pagination effect handles the rest.
-        sections.forEach((section, index) => {
+        pageSections.forEach((section, index) => {
           section.style.display = index === 0 ? "" : "none";
         });
 
+        if (firstPageIsBlank) {
+          sections[0].style.display = "none";
+        }
+
+        const count = Math.max(1, pageSections.length);
         setNumPages(count);
         onNumPagesChange?.(count);
+        onInitialBlankPageChange?.(firstPageIsBlank);
         setLoading(false);
       })
       .catch((err: unknown) => {
@@ -111,7 +182,7 @@ export default function DocxViewer({
     return () => {
       cancelled = true;
     };
-  }, [file, onNumPagesChange]);
+  }, [file, onNumPagesChange, onInitialBlankPageChange]);
 
   // Toggle which page is visible when pageNumber changes.
   useEffect(() => {
@@ -121,9 +192,7 @@ export default function DocxViewer({
       return;
     }
 
-    const sections = Array.from(
-      container.querySelectorAll("section.docx")
-    ) as HTMLElement[];
+    const sections = pageSectionsRef.current;
 
     if (sections.length === 0) {
       return;
@@ -138,6 +207,37 @@ export default function DocxViewer({
       section.style.display = i === index ? "" : "none";
     });
   }, [pageNumber, loading]);
+
+  useEffect(() => {
+    if (loading || !selectedDifference) {
+      return;
+    }
+
+    const page = pageSectionsRef.current[
+      Math.max(0, Math.min(pageSectionsRef.current.length - 1, pageNumber - 1))
+    ];
+    const searchText =
+      side === "master"
+        ? selectedDifference.master
+        : selectedDifference.sample;
+    if (!page || !searchText.trim()) {
+      return;
+    }
+
+    const range = findTextRange(page, searchText);
+    if (!range) {
+      return;
+    }
+
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    range.startContainer.parentElement?.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+      inline: "nearest",
+    });
+  }, [loading, pageNumber, selectedDifference, side]);
 
   return (
     <Box
@@ -260,4 +360,3 @@ export default function DocxViewer({
     </Box>
   );
 }
-

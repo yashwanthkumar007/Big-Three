@@ -135,7 +135,7 @@ export const router = createBrowserRouter([
         element: <NotesInspectionPage />,
       },
       {
-        path: ":inspectionType",
+        path: ":inspectionType/:inspectionId?",
         element: <WorkspacePage />,
       },
     ],

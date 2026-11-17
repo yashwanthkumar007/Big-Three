@@ -144,6 +144,26 @@ export type BarcodeResultPageModel = {
   barcodes: BarcodeFinding[];
 };
 
+const isUnreadablePlaceholder = (barcode: BarcodeFinding) =>
+  barcode.type.startsWith("Unreadable Linear Barcode") ||
+  barcode.decodedValue.startsWith("TBC placeholder");
+
+const overlapsSameSymbol = (a: BarcodeFinding, b: BarcodeFinding) => {
+  if (!a.box || !b.box || a.page !== b.page) return false;
+
+  const left = Math.max(a.box.x, b.box.x);
+  const top = Math.max(a.box.y, b.box.y);
+  const right = Math.min(a.box.x + a.box.width, b.box.x + b.box.width);
+  const bottom = Math.min(a.box.y + a.box.height, b.box.y + b.box.height);
+  const intersection = Math.max(0, right - left) * Math.max(0, bottom - top);
+  const smallerArea = Math.min(
+    a.box.width * a.box.height,
+    b.box.width * b.box.height,
+  );
+
+  return smallerArea > 0 && intersection / smallerArea >= 0.8;
+};
+
 type SortKey = "id" | "type" | "decodedValue" | "grade" | "level" | "comment";
 type SortDirection = "asc" | "desc";
 
@@ -200,7 +220,18 @@ export default function BarcodeInspectionResults({
   onCancel,
   isCancelling = false,
 }: BarcodeInspectionResultsProps) {
-  const barcodes = result.barcodes;
+  const barcodes = result.barcodes
+    .filter(
+      (barcode) =>
+        !isUnreadablePlaceholder(barcode) ||
+        !result.barcodes.some(
+          (other) =>
+            other !== barcode &&
+            !isUnreadablePlaceholder(other) &&
+            overlapsSameSymbol(barcode, other),
+        ),
+    )
+    .map((barcode, index) => ({ ...barcode, id: index + 1 }));
 
   /* The job is still running: the page is live, the table is not filled yet.
      "queued" is the brief state between creating the job and the engine

@@ -90,7 +90,16 @@ export function BarcodeHoverCard({ difference }: BarcodeHoverCardProps) {
         </Typography>
         <Typography variant="caption" sx={{ display: "block", color: "#D0D0E8", fontWeight: 600 }}>
           Sample:{" "}
-          <Box component="span" sx={{ fontWeight: 400, color: "#E8E8F5" }}>
+          <Box
+            component="span"
+            className="difference-hover-value"
+            sx={{
+              fontWeight: 400,
+              color: "#E8E8F5",
+              whiteSpace: "pre-wrap",
+              overflowWrap: "anywhere",
+            }}
+          >
             {difference?.sample || "—"}
           </Box>
         </Typography>
@@ -217,6 +226,7 @@ type PdfViewerProps = {
   inspectionType: string;
   side: "master" | "sample";
   selectedDifference?: InspectionDifference | null;
+  scrollToSelectedFinding?: boolean;
   naturalWidth?: number;
   naturalHeight?: number;
   zeroBasedPageIndex?: boolean;
@@ -276,6 +286,7 @@ export default function PdfViewer({
   inspectionType,
   side,
   selectedDifference,
+  scrollToSelectedFinding = false,
   naturalWidth,
   naturalHeight,
   zeroBasedPageIndex = true,
@@ -320,6 +331,11 @@ export default function PdfViewer({
 
   const [renderedPageHeight, setRenderedPageHeight] =
     useState<number | null>(null);
+
+  /** Which page the current `renderedPageWidth`/`renderedPageHeight` belong to. */
+  const [renderedPageNumber, setRenderedPageNumber] = useState<number | null>(
+    null,
+  );
 
   const [pdfError, setPdfError] =
     useState<string | null>(null);
@@ -596,18 +612,20 @@ export default function PdfViewer({
    * Scale backend coordinates to displayed PDF.
    * ------------------------------------------------------------
    */
+  const dimensionsReady =
+    renderedPageNumber !== null &&
+    renderedPageNumber === pageNumber &&
+    renderedPageWidth != null &&
+    renderedPageHeight != null;
+
   const scaleX =
-    bbox &&
-    naturalWidth &&
-    renderedPageWidth
-      ? renderedPageWidth / naturalWidth
+    bbox && dimensionsReady && naturalWidth
+      ? renderedPageWidth! / naturalWidth
       : 1;
 
   const scaleY =
-    bbox &&
-    naturalHeight &&
-    renderedPageHeight
-      ? renderedPageHeight / naturalHeight
+    bbox && dimensionsReady && naturalHeight
+      ? renderedPageHeight! / naturalHeight
       : 1;
 
   /*
@@ -635,6 +653,18 @@ export default function PdfViewer({
       ? bbox.height * scaleY
       : 0;
 
+  const scrollHighlightIntoView = () => {
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        highlightRef.current?.scrollIntoView({
+          block: "center",
+          inline: "center",
+          behavior: "smooth",
+        });
+      });
+    });
+  };
+
   /*
    * ------------------------------------------------------------
    * Automatically scroll to the selected difference.
@@ -643,6 +673,22 @@ export default function PdfViewer({
    * ------------------------------------------------------------
    */
   useEffect(() => {
+    if (scrollToSelectedFinding) {
+      if (
+        !selectedDifference ||
+        !bbox ||
+        !dimensionsReady ||
+        !highlightRef.current ||
+        !containerRef.current
+      ) {
+        return;
+      }
+
+      scrollHighlightIntoView();
+
+      return;
+    }
+
     if (
       !selectedDifference ||
       !bbox ||
@@ -689,6 +735,13 @@ export default function PdfViewer({
     pageNumber,
     renderedPageWidth,
     renderedPageHeight,
+    dimensionsReady,
+    scrollToSelectedFinding,
+    highlightLeft,
+    highlightTop,
+    highlightWidth,
+    highlightHeight,
+    zoom,
   ]);
 
   /*
@@ -988,13 +1041,12 @@ export default function PdfViewer({
             renderAnnotationLayer
             renderTextLayer
             onRenderSuccess={(page) => {
-              setRenderedPageWidth(
-                page.width
-              );
-
-              setRenderedPageHeight(
-                page.height
-              );
+              setRenderedPageWidth(page.width);
+              setRenderedPageHeight(page.height);
+              setRenderedPageNumber(pageNumber);
+              if (scrollToSelectedFinding && selectedDifference && bbox) {
+                scrollHighlightIntoView();
+              }
             }}
           />
 
@@ -1077,7 +1129,7 @@ export default function PdfViewer({
               SELECTED DIFFERENCE HIGHLIGHT
              ===================================================== */}
 
-          {bbox && (
+          {bbox && dimensionsReady && (
             <Tooltip
               title={
                 <BarcodeHoverCard difference={selectedDifference} />
@@ -1095,6 +1147,11 @@ export default function PdfViewer({
                        and scrollable instead of letting it run off-screen. */
                     maxWidth: 320,
                     whiteSpace: "normal",
+                    "& .difference-hover-value": {
+                      display: "block",
+                      maxHeight: 240,
+                      overflowY: "auto",
+                    },
                   },
                 },
                 arrow: {

@@ -212,6 +212,42 @@ class DedupAndOrderTests(unittest.TestCase):
         self.assertEqual(len(unique), 2)
         self.assertEqual(removed, 1)
 
+    def test_decoded_detection_replaces_overlapping_unreadable_placeholder(self):
+        placeholder = Detection(
+            format_id="UNREADABLE_LINEAR",
+            value="TBC placeholder (not decoded)",
+            page=0,
+            bbox=(10, 10, 110, 90),
+            polygon=[],
+            decoder="visual-candidate",
+            validated=False,
+        )
+        decoded = self._detection(
+            "1747", (12, 11, 108, 89), fmt="PHARMA_CODE"
+        )
+
+        for detections in ([placeholder, decoded], [decoded, placeholder]):
+            with self.subTest(order=[d.format_id for d in detections]):
+                unique, removed = deduplicate(list(detections))
+                self.assertEqual(unique, [decoded])
+                self.assertEqual(removed, 1)
+
+    def test_unreadable_placeholder_is_kept_without_overlapping_decode(self):
+        placeholder = Detection(
+            format_id="UNREADABLE_LINEAR",
+            value="TBC placeholder (not decoded)",
+            page=0,
+            bbox=(10, 10, 110, 90),
+            polygon=[],
+            decoder="visual-candidate",
+            validated=False,
+        )
+
+        unique, removed = deduplicate([placeholder])
+
+        self.assertEqual(unique, [placeholder])
+        self.assertEqual(removed, 0)
+
     def test_different_values_are_not_merged(self):
         a = self._detection("111", (10, 10, 110, 90))
         b = self._detection("222", (10, 10, 110, 90))
@@ -513,4 +549,3 @@ if __name__ == "__main__":
         )
         for test, trace in result.errors + result.failures:
             handle.write(f"\n--- {test}\n{trace[-700:]}\n")
-

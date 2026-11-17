@@ -2873,8 +2873,31 @@ def deduplicate(detections: list[Detection]) -> tuple[list[Detection], int]:
 
     Two detections are the same barcode when they are on the same page, decode
     to the same value in the same format, and their boxes overlap heavily.
-    Returns ``(unique, removed_count)``.
+    A decoded symbol also takes precedence over an overlapping unreadable TBC
+    placeholder candidate. Returns ``(unique, removed_count)``.
     """
+    original_count = len(detections)
+    readable = [
+        detection
+        for detection in detections
+        if detection.validated and detection.format_id != "UNREADABLE_LINEAR"
+    ]
+    detections = [
+        detection
+        for detection in detections
+        if not (
+            detection.format_id == "UNREADABLE_LINEAR"
+            and any(
+                decoded.page == detection.page
+                and (
+                    iou(decoded.bbox, detection.bbox) > IOU_MERGE_THRESHOLD
+                    or _overlap_over_smaller(decoded.bbox, detection.bbox) >= 0.80
+                )
+                for decoded in readable
+            )
+        )
+    ]
+
     unique: list[Detection] = []
 
     for detection in detections:
@@ -2894,7 +2917,7 @@ def deduplicate(detections: list[Detection]) -> tuple[list[Detection], int]:
         if not duplicate:
             unique.append(detection)
 
-    return unique, len(detections) - len(unique)
+    return unique, original_count - len(unique)
 
 
 def sort_in_document_order(detections: list[Detection]) -> list[Detection]:

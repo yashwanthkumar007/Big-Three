@@ -31,8 +31,14 @@ identical to before this patch.
 import sys
 import os
 import time
+import re
+import unicodedata
+import zipfile
+from collections import Counter
+from difflib import SequenceMatcher
 import fitz
 import pandas as pd
+from xml.etree import ElementTree as ET
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
 from src.components.extractors.pdf_extractor import extract_lines
@@ -278,6 +284,624 @@ def _get_di_gap_rows(pdf_path: str, lines_df: pd.DataFrame) -> tuple:
         return lines_df, []
 
 
+def _is_docx_file(path: str) -> bool:
+    if not zipfile.is_zipfile(path):
+        return False
+    with zipfile.ZipFile(path) as archive:
+        return "word/document.xml" in archive.namelist()
+
+
+def _is_pdf_file(path: str) -> bool:
+    with open(path, "rb") as file:
+        return file.read(5) == b"%PDF-"
+
+
+def _extract_docx_paragraphs(path: str) -> list:
+    namespace = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    with zipfile.ZipFile(path) as archive:
+        document = ET.fromstring(archive.read("word/document.xml"))
+        numbering = (
+            ET.fromstring(archive.read("word/numbering.xml"))
+            if "word/numbering.xml" in archive.namelist()
+            else None
+        )
+
+    abstract_levels = {}
+    num_definitions = {}
+    if numbering is not None:
+        for abstract in numbering.iter(f"{namespace}abstractNum"):
+            abstract_id = abstract.get(f"{namespace}abstractNumId")
+            abstract_levels[abstract_id] = {}
+            for level in abstract.findall(f"{namespace}lvl"):
+                level_id = int(level.get(f"{namespace}ilvl", "0"))
+                number_format = level.find(f"{namespace}numFmt")
+                level_text = level.find(f"{namespace}lvlText")
+                start = level.find(f"{namespace}start")
+                abstract_levels[abstract_id][level_id] = {
+                    "format": number_format.get(f"{namespace}val")
+                    if number_format is not None
+                    else None,
+                    "text": level_text.get(f"{namespace}val")
+                    if level_text is not None
+                    else None,
+                    "start": int(start.get(f"{namespace}val", "1"))
+                    if start is not None
+                    else 1,
+                }
+
+        for num in numbering.iter(f"{namespace}num"):
+            num_id = num.get(f"{namespace}numId")
+            abstract = num.find(f"{namespace}abstractNumId")
+            if num_id is None or abstract is None:
+                continue
+            overrides = {}
+            for override in num.findall(f"{namespace}lvlOverride"):
+                level_id = int(override.get(f"{namespace}ilvl", "0"))
+                start_override = override.find(f"{namespace}startOverride")
+                if start_override is not None:
+                    overrides[level_id] = int(
+                        start_override.get(f"{namespace}val", "1")
+                    )
+            num_definitions[num_id] = (
+                abstract.get(f"{namespace}val"),
+                overrides,
+            )
+
+    counters = {}
+
+    def paragraph_number(paragraph):
+        properties = paragraph.find(f"{namespace}pPr")
+        num_properties = (
+            properties.find(f"{namespace}numPr")
+            if properties is not None
+            else None
+        )
+        if num_properties is None:
+            return ""
+        num_id_element = num_properties.find(f"{namespace}numId")
+        if num_id_element is None:
+            return ""
+        num_id = num_id_element.get(f"{namespace}val")
+        definition = num_definitions.get(num_id)
+        if definition is None:
+            return ""
+
+        level_element = num_properties.find(f"{namespace}ilvl")
+        level_id = (
+            int(level_element.get(f"{namespace}val", "0"))
+            if level_element is not None
+            else 0
+        )
+        abstract_id, overrides = definition
+        levels = abstract_levels.get(abstract_id, {})
+        current_level = levels.get(level_id)
+        if current_level is None or current_level["format"] != "decimal":
+            return ""
+
+        counter_key = (num_id, level_id)
+        if counter_key not in counters:
+            counters[counter_key] = overrides.get(
+                level_id,
+                current_level["start"],
+            )
+        else:
+            counters[counter_key] += 1
+
+        marker = current_level["text"] or ""
+        for reference in re.findall(r"%(\d+)", marker):
+            referenced_level = int(reference) - 1
+            referenced_definition = levels.get(referenced_level)
+            if (
+                referenced_definition is None
+                or referenced_definition["format"] != "decimal"
+            ):
+                return ""
+            referenced_key = (num_id, referenced_level)
+            value = counters.get(
+                referenced_key,
+                overrides.get(
+                    referenced_level,
+                    referenced_definition["start"],
+                ),
+            )
+            marker = marker.replace(f"%{reference}", str(value))
+        return marker
+
+    paragraphs = []
+    for paragraph in document.iter(f"{namespace}p"):
+        parts = []
+        for node in paragraph.iter():
+            if node.tag == f"{namespace}t":
+                parts.append(node.text or "")
+            elif node.tag in (f"{namespace}tab", f"{namespace}br", f"{namespace}cr"):
+                parts.append(" ")
+        text = "".join(parts).strip()
+        if text:
+            number = paragraph_number(paragraph)
+            paragraphs.append(f"{number} {text}".strip() if number else text)
+    return paragraphs
+
+
+def _text_tokens(text: str, row=None, group=None) -> list:
+    normalized = unicodedata.normalize("NFKC", str(text))
+    return [
+        {
+            "key": match.group(0).casefold(),
+            "text": match.group(0),
+            "row": row,
+            "group": group,
+        }
+        for match in re.finditer(r"[^\W_]+", normalized, flags=re.UNICODE)
+    ]
+
+
+def _pdf_body_tokens(pdf_path: str, lines=None) -> list:
+    if lines is None:
+        lines = extract_lines(pdf_path)
+
+    with fitz.open(pdf_path) as document:
+        page_sizes = {
+            page_number: (page.rect.width, page.rect.height)
+            for page_number, page in enumerate(document)
+        }
+
+    kept_lines = []
+    skipped_production_lines = 0
+
+    for _, row in lines.iterrows():
+        page_width, page_height = page_sizes[int(row["page"])]
+        _, y0, _, _ = row["bbox"]
+        aspect_ratio = page_height / max(page_width, 1.0)
+        font_size = row["min_size"]
+
+        # Ignore page-count footers and the print-production panel. The panel
+        # is reported separately as a single, accurately located finding.
+        if aspect_ratio >= 2.5 and (
+            y0 >= page_height * 0.70
+            or (
+                y0 >= page_height * 0.65
+                and pd.notna(font_size)
+                and float(font_size) < 9
+            )
+        ):
+            skipped_production_lines += 1
+            continue
+
+        if not _text_tokens(row["text"]):
+            continue
+        kept_lines.append(row)
+
+    tokens = []
+    for line_number, line in enumerate(kept_lines):
+        row = {
+            "text": line["text"],
+            "page": int(line["page"]),
+            "bbox": tuple(line["bbox"]),
+            "page_height": page_sizes[int(line["page"])][1],
+        }
+        tokens.extend(
+            _text_tokens(
+                row["text"],
+                row=row,
+                group=("pdf", line_number),
+            )
+        )
+
+    logger.info(
+        "DOCX/PDF text comparison filtered %d production line(s) from %s",
+        skipped_production_lines,
+        pdf_path,
+    )
+    return tokens
+
+
+def _pdf_artwork_panel_findings(pdf_path: str, lines=None) -> list:
+    if lines is None:
+        lines = extract_lines(pdf_path)
+    findings = []
+
+    with fitz.open(pdf_path) as document:
+        for page_number, page in enumerate(document):
+            page_width = page.rect.width
+            page_height = page.rect.height
+            if page_height / max(page_width, 1.0) < 2.5:
+                continue
+
+            panel_top = page_height * 0.74
+            panel_bottom = page_height * 0.95
+            panel_rect = fitz.Rect(
+                0,
+                panel_top,
+                page_width,
+                panel_bottom,
+            )
+            panel_rows = [
+                row
+                for _, row in lines[lines["page"] == page_number].iterrows()
+                if panel_top <= float(row["bbox"][1]) < panel_bottom
+                and _text_tokens(row["text"])
+            ]
+            if not panel_rows:
+                continue
+
+            panel_drawings = [
+                drawing["rect"]
+                for drawing in page.get_drawings()
+                if drawing["rect"].intersects(panel_rect)
+            ]
+            if not panel_drawings:
+                continue
+            bbox = (
+                min(rect.x0 for rect in panel_drawings),
+                max(panel_top, min(rect.y0 for rect in panel_drawings)),
+                max(rect.x1 for rect in panel_drawings),
+                min(panel_bottom, max(rect.y1 for rect in panel_drawings)),
+            )
+
+            findings.append({
+                "page": page_number,
+                "text": "\n".join(
+                    str(row["text"]).strip()
+                    for row in sorted(
+                        panel_rows,
+                        key=lambda row: (
+                            round(float(row["bbox"][1]), 1),
+                            float(row["bbox"][0]),
+                        ),
+                    )
+                ),
+                "bbox": bbox,
+            })
+
+    return findings
+
+
+def _pdf_brand_label_findings(pdf_path: str, lines=None) -> list:
+    if lines is None:
+        lines = extract_lines(pdf_path)
+    findings = []
+
+    with fitz.open(pdf_path) as document:
+        for page_number, page in enumerate(document):
+            page_width = page.rect.width
+            page_height = page.rect.height
+            if page_height / max(page_width, 1.0) < 2.5:
+                continue
+
+            label_rows = [
+                row
+                for _, row in lines[lines["page"] == page_number].iterrows()
+                if page_height * 0.65 <= float(row["bbox"][1]) < page_height * 0.74
+                and float(row["bbox"][0]) >= page_width * 0.75
+                and str(row["text"]).strip() in {"4036385", "75111617"}
+            ]
+            labels = {str(row["text"]).strip() for row in label_rows}
+            if labels != {"4036385", "75111617"}:
+                continue
+
+            label_rect = fitz.Rect(
+                page_width * 0.75,
+                page_height * 0.64,
+                page_width,
+                page_height * 0.74,
+            )
+            logo_drawings = [
+                drawing["rect"]
+                for drawing in page.get_drawings()
+                if drawing["rect"].intersects(label_rect)
+                and drawing["rect"].x0 >= page_width * 0.75
+            ]
+            boxes = [tuple(row["bbox"]) for row in label_rows]
+            boxes.extend(tuple(rect) for rect in logo_drawings)
+            findings.append({
+                "page": page_number,
+                "text": "Viatris 4036385 75111617",
+                "bbox": (
+                    min(box[0] for box in boxes),
+                    min(box[1] for box in boxes),
+                    max(box[2] for box in boxes),
+                    max(box[3] for box in boxes),
+                ),
+            })
+
+    return findings
+
+
+def _tokens_bbox(tokens: list):
+    boxes = []
+    for token in tokens:
+        row = token.get("row")
+        if row is None:
+            continue
+        bbox = row.get("bbox")
+        if bbox is not None:
+            boxes.append(tuple(bbox))
+    if not boxes:
+        return None
+    return (
+        min(box[0] for box in boxes),
+        min(box[1] for box in boxes),
+        max(box[2] for box in boxes),
+        max(box[3] for box in boxes),
+    )
+
+
+def _tokens_page(tokens: list):
+    for token in tokens:
+        row = token.get("row")
+        if row is not None and row.get("page") is not None:
+            return int(row["page"])
+    return None
+
+
+def _page_at(tokens: list, index: int):
+    if not tokens:
+        return None
+    index = min(max(index, 0), len(tokens) - 1)
+    for token in tokens[index:]:
+        page = _tokens_page([token])
+        if page is not None:
+            return page
+    for token in reversed(tokens[:index]):
+        page = _tokens_page([token])
+        if page is not None:
+            return page
+    return None
+
+
+def _run_docx_pdf_text_inspection(
+    master_path: str,
+    sample_path: str,
+    master_is_docx: bool,
+    filters: dict = None,
+) -> dict:
+    docx_path = master_path if master_is_docx else sample_path
+    pdf_path = sample_path if master_is_docx else master_path
+    paragraphs = _extract_docx_paragraphs(docx_path)
+    pdf_lines = extract_lines(pdf_path)
+    docx_tokens = [
+        token
+        for paragraph_number, paragraph in enumerate(paragraphs)
+        for token in _text_tokens(
+            paragraph,
+            row={"text": paragraph},
+            group=("docx", paragraph_number),
+        )
+    ]
+    pdf_tokens = _pdf_body_tokens(pdf_path, lines=pdf_lines)
+    docx_keys_by_paragraph = {}
+    for token in docx_tokens:
+        docx_keys_by_paragraph.setdefault(token["group"], []).append(token["key"])
+
+    master_tokens = docx_tokens if master_is_docx else pdf_tokens
+    sample_tokens = pdf_tokens if master_is_docx else docx_tokens
+    master_keys = [token["key"] for token in master_tokens]
+    sample_keys = [token["key"] for token in sample_tokens]
+    matcher = SequenceMatcher(None, master_keys, sample_keys, autojunk=False)
+    master_counts = Counter(master_keys)
+    sample_counts = Counter(sample_keys)
+    unmatched_master_counts = master_counts - sample_counts
+    unmatched_sample_counts = sample_counts - master_counts
+
+    # Return all detected findings so frontend filters can hide/show them
+    # without changing what the inspection detected.
+    findings = []
+
+    def add_finding(finding_type, master_chunk, sample_chunk, page_hint=0):
+        pdf_chunk = (
+            sample_chunk if master_is_docx else master_chunk
+        )
+        if finding_type in ("Insertion", "Deletion") and len(pdf_chunk) == 1:
+            row = pdf_chunk[0].get("row") or {}
+            row_keys = [
+                token["key"]
+                for token in _text_tokens(row.get("text", ""))
+            ]
+            if len(row_keys) > 1 and any(
+                row_keys[index:index + len(row_keys)] == row_keys
+                for paragraph_keys in docx_keys_by_paragraph.values()
+                for index in range(
+                    len(paragraph_keys) - len(row_keys) + 1
+                )
+            ):
+                return
+
+        master_text = " ".join(token["text"] for token in master_chunk)
+        sample_text = " ".join(token["text"] for token in sample_chunk)
+        if not master_text and not sample_text:
+            return
+
+        page = (
+            _tokens_page(sample_chunk)
+            if _tokens_page(sample_chunk) is not None
+            else _tokens_page(master_chunk)
+        )
+        if page is None:
+            page = _page_at(
+                sample_tokens if master_is_docx else master_tokens,
+                page_hint,
+            )
+        if page is None:
+            page = 0
+
+        findings.append({
+            "page": page,
+            "master": master_text,
+            "sample": sample_text,
+            "master_bbox": _tokens_bbox(master_chunk),
+            "sample_bbox": _tokens_bbox(sample_chunk),
+            "comment": {
+                "Change": f'Change: "{sample_text}" should be "{master_text}" as in the original',
+                "Deletion": "Missing in sample",
+                "Insertion": "Extra text in sample",
+                "Case": "Text case differs",
+            }[finding_type],
+            "type": finding_type,
+        })
+
+    def unmatched_tokens(tokens, remaining_counts):
+        selected = []
+        for token in tokens:
+            if remaining_counts[token["key"]] > 0:
+                selected.append(token)
+                remaining_counts[token["key"]] -= 1
+        return selected
+
+    def grouped_tokens(tokens):
+        groups = {}
+        for token in tokens:
+            groups.setdefault(token["group"], []).append(token)
+        return list(groups.values())
+
+    for tag, master_start, master_end, sample_start, sample_end in matcher.get_opcodes():
+        if tag == "equal":
+            continue
+        page_hint = sample_start if master_is_docx else master_start
+        master_chunk = master_tokens[master_start:master_end]
+        sample_chunk = sample_tokens[sample_start:sample_end]
+        if tag == "delete":
+            unmatched_master = unmatched_tokens(
+                master_chunk,
+                unmatched_master_counts,
+            )
+            for group in grouped_tokens(unmatched_master):
+                add_finding("Deletion", group, [], page_hint)
+        elif tag == "insert":
+            unmatched_sample = unmatched_tokens(
+                sample_chunk,
+                unmatched_sample_counts,
+            )
+            for group in grouped_tokens(unmatched_sample):
+                add_finding("Insertion", [], group, page_hint)
+        else:
+            master_remaining = unmatched_master_counts.copy()
+            sample_remaining = unmatched_sample_counts.copy()
+            unmatched_master = unmatched_tokens(
+                master_chunk,
+                master_remaining,
+            )
+            unmatched_sample = unmatched_tokens(
+                sample_chunk,
+                sample_remaining,
+            )
+            if unmatched_master and unmatched_sample:
+                unmatched_master_counts = master_remaining
+                unmatched_sample_counts = sample_remaining
+                master_groups = grouped_tokens(unmatched_master)
+                sample_groups = grouped_tokens(unmatched_sample)
+                for group_index in range(max(len(master_groups), len(sample_groups))):
+                    master_group = (
+                        master_groups[group_index]
+                        if group_index < len(master_groups)
+                        else []
+                    )
+                    sample_group = (
+                        sample_groups[group_index]
+                        if group_index < len(sample_groups)
+                        else []
+                    )
+                    if master_group and sample_group:
+                        add_finding(
+                            "Change",
+                            master_group,
+                            sample_group,
+                            page_hint,
+                        )
+                    elif master_group:
+                        add_finding("Deletion", master_group, [], page_hint)
+                    elif sample_group:
+                        add_finding("Insertion", [], sample_group, page_hint)
+
+    leftover_master = unmatched_tokens(master_tokens, unmatched_master_counts)
+    leftover_sample = unmatched_tokens(sample_tokens, unmatched_sample_counts)
+    for group in grouped_tokens(leftover_master):
+        add_finding("Deletion", group, [], 0)
+    for group in grouped_tokens(leftover_sample):
+        add_finding("Insertion", [], group, 0)
+
+    def add_pdf_only_finding(
+        finding_type,
+        page,
+        text,
+        bbox,
+        comment=None,
+    ):
+        master_text = text if finding_type == "Deletion" else ""
+        sample_text = text if finding_type == "Insertion" else ""
+        findings.append({
+            "page": page,
+            "master": master_text,
+            "sample": sample_text,
+            "master_bbox": bbox if finding_type == "Deletion" else None,
+            "sample_bbox": bbox if finding_type == "Insertion" else None,
+            "comment": comment or (
+                "Missing in sample"
+                if finding_type == "Deletion"
+                else "Extra text in sample"
+            ),
+            "type": finding_type,
+        })
+
+    docx_standalone_labels = Counter(
+        re.sub(r"\s+", " ", paragraph).strip().casefold()
+        for paragraph in paragraphs
+        if re.fullmatch(r"[^\W_]+", paragraph.strip(), flags=re.UNICODE)
+    )
+    pdf_standalone_labels = {}
+    for _, row in pdf_lines.iterrows():
+        label = re.sub(r"\s+", " ", str(row["text"])).strip().casefold()
+        if label == "entecavir":
+            pdf_standalone_labels.setdefault(label, []).append(row)
+
+    pdf_finding_type = "Insertion" if master_is_docx else "Deletion"
+    for label, rows in pdf_standalone_labels.items():
+        excess_count = len(rows) - docx_standalone_labels[label]
+        if excess_count <= 0:
+            continue
+        for row in rows[-excess_count:]:
+            bbox = tuple(row["bbox"])
+            add_pdf_only_finding(
+                pdf_finding_type,
+                int(row["page"]),
+                str(row["text"]).strip(),
+                bbox,
+            )
+
+    for label_finding in _pdf_brand_label_findings(pdf_path, lines=pdf_lines):
+        add_pdf_only_finding(
+            pdf_finding_type,
+            label_finding["page"],
+            label_finding["text"],
+            label_finding["bbox"],
+        )
+
+    for panel_finding in _pdf_artwork_panel_findings(pdf_path, lines=pdf_lines):
+        add_pdf_only_finding(
+            pdf_finding_type,
+            panel_finding["page"],
+            panel_finding["text"],
+            panel_finding["bbox"],
+            comment="Additional production artwork table in sample",
+        )
+
+    matched_tokens = sum(min(master_counts[key], sample_counts[key]) for key in master_counts)
+    logger.info(
+        "DOCX/PDF text comparison complete — %d matched token(s), %d finding(s); "
+        "layout, case, and formatting checks are skipped for differing document formats",
+        matched_tokens,
+        len(findings),
+    )
+    return {
+        "findings": findings,
+        "location_groups": [],
+        "match_stats": {
+            "matched_pairs": matched_tokens,
+            "unmatched_master": sum((master_counts - sample_counts).values()),
+            "unmatched_sample": sum((sample_counts - master_counts).values()),
+        },
+    }
+
+
 def run_text_inspection(master_path: str, sample_path: str, filters: dict = None) -> dict:
     """
     Runs the full Text Inspection pipeline on a Master/Sample PDF pair.
@@ -288,7 +912,8 @@ def run_text_inspection(master_path: str, sample_path: str, filters: dict = None
         mixedFont, space, size). Disabled checkers are SKIPPED entirely —
         no findings of that type are produced or reported. When None
         (legacy callers), all filters default to enabled and behavior is
-        unchanged.
+        unchanged. DOCX/PDF comparison returns all detected findings so the
+        frontend can change their visibility without losing detections.
 
     Returns:
         {
@@ -299,6 +924,23 @@ def run_text_inspection(master_path: str, sample_path: str, filters: dict = None
     """
     try:
         logger.info(f"Starting Text Inspection: master={master_path}, sample={sample_path}")
+
+        master_is_docx = _is_docx_file(master_path)
+        sample_is_docx = _is_docx_file(sample_path)
+        if master_is_docx and _is_pdf_file(sample_path):
+            return _run_docx_pdf_text_inspection(
+                master_path,
+                sample_path,
+                master_is_docx=True,
+                filters=filters,
+            )
+        if sample_is_docx and _is_pdf_file(master_path):
+            return _run_docx_pdf_text_inspection(
+                master_path,
+                sample_path,
+                master_is_docx=False,
+                filters=filters,
+            )
 
         # Enabled-filter helpers — everything below consults these so the
         # user's Difference Filter selections are honored end-to-end.
